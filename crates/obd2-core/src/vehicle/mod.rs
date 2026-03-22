@@ -1,5 +1,7 @@
 //! Vehicle specification types and loading.
 
+pub mod vin;
+
 use serde::Deserialize;
 
 // ── Module Identity (protocol-agnostic) ──
