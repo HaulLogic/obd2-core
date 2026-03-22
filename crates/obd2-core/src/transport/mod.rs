@@ -4,6 +4,8 @@
 //! (serial port, BLE GATT, WiFi socket, etc.). This is an open trait —
 //! anyone can implement it for custom transports.
 
+pub mod mock;
+
 use async_trait::async_trait;
 use crate::error::Obd2Error;
 

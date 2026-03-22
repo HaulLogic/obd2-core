@@ -12,6 +12,8 @@ use crate::protocol::pid::Pid;
 use crate::protocol::service::ServiceRequest;
 
 pub mod detect;
+pub mod elm327;
+pub mod mock;
 
 /// Protocol interpreter for OBD-II communication.
 ///
