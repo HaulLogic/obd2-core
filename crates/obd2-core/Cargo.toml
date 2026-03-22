@@ -12,7 +12,7 @@ categories = ["hardware-support"]
 [features]
 default = ["serial", "embedded-specs"]
 serial = ["dep:tokio-serial"]
-ble = ["dep:btleplug"]
+ble = ["dep:btleplug", "dep:futures", "dep:uuid"]
 embedded-specs = []
 nhtsa = ["dep:reqwest"]
 full = ["serial", "ble", "embedded-specs", "nhtsa"]
@@ -28,6 +28,8 @@ serde_yaml = { workspace = true }
 
 tokio-serial = { version = "5", optional = true }
 btleplug = { version = "0.11", optional = true }
+futures = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
 reqwest = { version = "0.12", optional = true, default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
