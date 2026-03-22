@@ -5,6 +5,10 @@
 //! anyone can implement it for custom transports.
 
 pub mod mock;
+#[cfg(feature = "serial")]
+pub mod serial;
+#[cfg(feature = "ble")]
+pub mod ble;
 
 use async_trait::async_trait;
 use crate::error::Obd2Error;
