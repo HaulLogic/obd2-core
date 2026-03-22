@@ -1,7 +1,10 @@
 //! Session orchestrator -- the primary entry point for consumers.
 
+pub mod diag_session;
 pub mod diagnostics;
 pub mod enhanced;
+pub mod modes;
+pub mod poller;
 pub mod threshold;
 
 use std::collections::HashSet;
