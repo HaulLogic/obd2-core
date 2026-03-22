@@ -169,6 +169,24 @@ impl Adapter for MockAdapter {
             // Mode 22: Enhanced read (return mock data)
             0x21 | 0x22 => Ok(vec![0x80, 0x00]),
 
+            // Mode 10: Diagnostic session control
+            0x10 => Ok(vec![]),
+
+            // Mode 27: Security access (return mock seed)
+            0x27 => {
+                match req.data.first() {
+                    Some(0x01) => Ok(vec![0xAA, 0xBB, 0xCC, 0xDD]), // Mock seed
+                    Some(0x02) => Ok(vec![]),                         // Key accepted
+                    _ => Ok(vec![]),
+                }
+            }
+
+            // Mode 2F: Actuator control
+            0x2F => Ok(vec![]),
+
+            // Mode 3E: Tester present
+            0x3E => Ok(vec![]),
+
             _ => Err(Obd2Error::NoData),
         }
     }
