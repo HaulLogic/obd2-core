@@ -1,6 +1,8 @@
 //! Vehicle specification types and loading.
 
 pub mod loader;
+#[cfg(feature = "nhtsa")]
+pub mod nhtsa;
 pub mod vin;
 
 use serde::Deserialize;
