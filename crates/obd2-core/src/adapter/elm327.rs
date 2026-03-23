@@ -69,29 +69,45 @@ impl Elm327Adapter {
     /// Parse hex response string into raw bytes.
     /// Input like "41 0C 0A A0\r>" -> vec of all hex bytes, then caller
     /// specifies how many leading bytes to skip (service echo + PID echo).
+    ///
+    /// Handles echo lines gracefully: if the ELM327 echoes the command
+    /// (e.g. "010C\r41 0C 0A A0\r>"), the echo line is skipped because
+    /// tokens like "010C" exceed u8 range and fail hex-byte parsing.
     fn parse_hex_response(response: &str, skip_bytes: usize) -> Result<Vec<u8>, Obd2Error> {
-        let cleaned = response
-            .replace(['\r', '\n'], " ")
-            .replace('>', "");
+        let cleaned = response.replace('>', "");
+        let mut all_bytes = Vec::new();
 
-        let bytes: Result<Vec<u8>, _> = cleaned
-            .split_whitespace()
-            .filter(|s| !s.is_empty())
-            .map(|s| u8::from_str_radix(s, 16))
-            .collect();
-
-        match bytes {
-            Ok(all_bytes) => {
-                if all_bytes.len() > skip_bytes {
-                    Ok(all_bytes[skip_bytes..].to_vec())
-                } else {
-                    Ok(vec![])
-                }
+        for line in cleaned.split(['\r', '\n']) {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
             }
-            Err(_) => Err(Obd2Error::ParseError(format!(
-                "invalid hex: {}",
+
+            // Try to parse this line as space-separated hex bytes.
+            // Echo lines (e.g. "010C") contain tokens that exceed u8
+            // range or aren't valid hex, so they naturally fail and
+            // are skipped.
+            let line_bytes: Result<Vec<u8>, _> = line
+                .split_whitespace()
+                .map(|s| u8::from_str_radix(s, 16))
+                .collect();
+
+            if let Ok(bytes) = line_bytes {
+                all_bytes.extend(bytes);
+            }
+        }
+
+        if all_bytes.is_empty() {
+            return Err(Obd2Error::ParseError(format!(
+                "no valid hex data in response: {}",
                 response.trim()
-            ))),
+            )));
+        }
+
+        if all_bytes.len() > skip_bytes {
+            Ok(all_bytes[skip_bytes..].to_vec())
+        } else {
+            Ok(vec![])
         }
     }
 
@@ -160,6 +176,10 @@ impl std::fmt::Debug for Elm327Adapter {
 #[async_trait]
 impl Adapter for Elm327Adapter {
     async fn initialize(&mut self) -> Result<AdapterInfo, Obd2Error> {
+        if self.initialized {
+            return Ok(self.info.clone());
+        }
+
         // Step 1: Reset
         let atz_response = self.send_command("ATZ").await?;
 
@@ -350,6 +370,20 @@ mod tests {
     async fn test_elm327_parse_hex_response() {
         let data = Elm327Adapter::parse_hex_response("41 0C 0A A0\r>", 2).unwrap();
         assert_eq!(data, vec![0x0A, 0xA0]);
+    }
+
+    #[tokio::test]
+    async fn test_elm327_parse_hex_response_with_echo() {
+        // ELM327 echoes "010C" before the actual response when ATE0 hasn't taken effect
+        let data = Elm327Adapter::parse_hex_response("010C\r41 0C 0A A0\r>", 2).unwrap();
+        assert_eq!(data, vec![0x0A, 0xA0]);
+    }
+
+    #[tokio::test]
+    async fn test_elm327_parse_hex_response_echo_only() {
+        // Only echo, no ECU response — should return a parse error
+        let result = Elm327Adapter::parse_hex_response("010C\r>", 2);
+        assert!(matches!(result, Err(Obd2Error::ParseError(_))));
     }
 
     #[tokio::test]

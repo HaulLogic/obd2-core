@@ -55,6 +55,15 @@ impl<A: Adapter> Session<A> {
         }
     }
 
+    // -- Initialization --
+
+    /// Initialize the underlying adapter (reset, echo off, protocol detect).
+    ///
+    /// Must be called before any PID reads. Returns adapter info on success.
+    pub async fn initialize(&mut self) -> Result<crate::adapter::AdapterInfo, Obd2Error> {
+        self.adapter.initialize().await
+    }
+
     // -- Spec Management --
 
     /// Load a vehicle spec from a YAML file.

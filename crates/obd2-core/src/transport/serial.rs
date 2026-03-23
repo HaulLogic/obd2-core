@@ -66,7 +66,9 @@ impl Transport for SerialTransport {
 
     async fn read(&mut self) -> Result<Vec<u8>, Obd2Error> {
         let mut result = Vec::new();
-        let timeout = tokio::time::Duration::from_secs(5);
+        // ELM327 protocol search (ATSP0 + 0100) can take 10+ seconds
+        // as it cycles through all supported protocols.
+        let timeout = tokio::time::Duration::from_secs(12);
 
         loop {
             match tokio::time::timeout(timeout, self.port.read(&mut self.read_buf)).await {
@@ -75,25 +77,12 @@ impl Transport for SerialTransport {
                 }
                 Ok(Ok(n)) => {
                     result.extend_from_slice(&self.read_buf[..n]);
-                    // Check for ELM327 prompt character '>'
+                    // The '>' prompt is the only reliable end-of-response
+                    // marker for ELM327. Do NOT break on \r or \n — the
+                    // adapter sends status lines like "SEARCHING...\r"
+                    // before the actual response arrives.
                     if result.contains(&b'>') {
                         break;
-                    }
-                    // Check for common terminators
-                    let as_str = String::from_utf8_lossy(&result);
-                    if as_str.ends_with('\r') || as_str.ends_with('\n') {
-                        // Give a tiny bit more time for additional data
-                        match tokio::time::timeout(
-                            tokio::time::Duration::from_millis(50),
-                            self.port.read(&mut self.read_buf),
-                        )
-                        .await
-                        {
-                            Ok(Ok(n)) if n > 0 => {
-                                result.extend_from_slice(&self.read_buf[..n]);
-                            }
-                            _ => break,
-                        }
                     }
                 }
                 Ok(Err(e)) => {
