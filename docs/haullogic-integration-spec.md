@@ -9,6 +9,15 @@
 
 obd2-core is a cross-platform Rust library for OBD-II vehicle diagnostics. HaulLogic should consume it as a dependency — all protocol logic, vehicle specs, adapter communication, and diagnostic intelligence lives in obd2-core. HaulLogic becomes a pure fleet management UI/business-logic shell.
 
+## Current J1939 Gap
+
+HaulLogic's current integration work found one important gap in the shared library surface: downstream consumers need a real session-level J1939 PGN read path, not just decode helpers or protocol claims in documentation.
+
+See:
+- `docs/2026-04-03-j1939-support-requirements.md`
+- `docs/2026-04-03-j1939-support-design.md`
+- `docs/2026-04-03-j1939-support-change-list.md`
+
 ## Cargo Dependency
 
 ```toml
