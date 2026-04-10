@@ -36,11 +36,16 @@ use obd2_core::protocol::service::{ServiceRequest, Target, VehicleInfo, O2TestRe
 use obd2_core::session::Session;
 use obd2_core::session::poller::{PollConfig, PollEvent, PollHandle};
 use obd2_core::session::threshold;
-use obd2_core::session::diag_session::{enter_session, security_access, actuator_control, ActuatorCommand, DiagSession, SessionState, KeyFunction};
+use obd2_core::session::DiagnosticSessionState;
+use obd2_core::session::diag_session::KeyFunction;
+use obd2_core::protocol::service::{ActuatorCommand, DiagSession};
 
 // Vehicle
 use obd2_core::vehicle::{VehicleSpec, VehicleProfile, SpecRegistry, ModuleId, Protocol, PhysicalAddress, ThresholdSet, ThresholdResult, AlertLevel};
 use obd2_core::vehicle::vin;
+
+// J1939
+use obd2_core::protocol::j1939::{Pgn, J1939Dtc, decode_eec1, decode_ccvs, decode_et1, decode_eflp1, decode_lfe, decode_dm1};
 
 // Adapter
 use obd2_core::adapter::{Adapter, AdapterInfo, Chipset, Capabilities};
@@ -86,23 +91,66 @@ impl<A: Adapter> Session<A> {
     pub async fn read_pending_dtcs(&mut self) -> Result<Vec<Dtc>, Obd2Error>;
     pub async fn read_permanent_dtcs(&mut self) -> Result<Vec<Dtc>, Obd2Error>;
 
+    // Mode 03/07/0A (aggregated)
+    pub async fn read_all_dtcs(&mut self) -> Result<Vec<Dtc>, Obd2Error>;
+
     // Mode 04
     pub async fn clear_dtcs(&mut self) -> Result<(), Obd2Error>;
+    pub async fn clear_dtcs_on_module(&mut self, module: ModuleId) -> Result<(), Obd2Error>;
 
     // Mode 05
     pub async fn read_o2_monitoring(&mut self, test_id: u8) -> Result<Vec<O2TestResult>, Obd2Error>;
     pub async fn read_all_o2_monitoring(&mut self) -> Result<Vec<O2TestResult>, Obd2Error>;
 
+    // Mode 06
+    pub async fn read_test_results(&mut self, test_id: u8) -> Result<Vec<TestResult>, Obd2Error>;
+
+    // Mode 02
+    pub async fn read_freeze_frame(&mut self, pid: Pid, frame: u8) -> Result<Reading, Obd2Error>;
+
+    // Mode 01 PID 01
+    pub async fn read_readiness(&mut self) -> Result<ReadinessStatus, Obd2Error>;
+
     // Mode 09
     pub async fn read_vin(&mut self) -> Result<String, Obd2Error>;
+    pub async fn read_vehicle_info(&mut self) -> Result<VehicleInfo, Obd2Error>;
     pub async fn identify_vehicle(&mut self) -> Result<VehicleProfile, Obd2Error>;
 
     // Mode 22 (enhanced)
     pub async fn read_enhanced(&mut self, did: u16, module: ModuleId) -> Result<Reading, Obd2Error>;
     pub fn module_pids(&self, module: ModuleId) -> Vec<&EnhancedPid>;
 
+    // Diagnostic session (Mode 10/27/2F/3E)
+    pub async fn enter_diagnostic_session(&mut self, session: DiagSession, module: ModuleId) -> Result<(), Obd2Error>;
+    pub async fn security_access(&mut self, module: ModuleId, key_fn: &KeyFunction) -> Result<(), Obd2Error>;
+    pub async fn actuator_control(&mut self, did: u16, module: ModuleId, command: &ActuatorCommand) -> Result<(), Obd2Error>;
+    pub async fn actuator_release(&mut self, did: u16, module: ModuleId) -> Result<(), Obd2Error>;
+    pub async fn tester_present(&mut self, module: ModuleId) -> Result<(), Obd2Error>;
+    pub async fn end_diagnostic_session(&mut self, module: ModuleId) -> Result<(), Obd2Error>;
+
+    // J1939 (heavy-duty)
+    pub async fn read_j1939_pgn(&mut self, pgn: Pgn) -> Result<Vec<u8>, Obd2Error>;
+    pub async fn read_j1939_dtcs(&mut self) -> Result<Vec<J1939Dtc>, Obd2Error>;
+
+    // Thresholds
+    pub fn evaluate_threshold(&self, pid: Pid, value: f64) -> Option<ThresholdResult>;
+    pub fn evaluate_enhanced_threshold(&self, did: u16, value: f64) -> Option<ThresholdResult>;
+
     // Adapter
     pub async fn battery_voltage(&mut self) -> Result<Option<f64>, Obd2Error>;
+
+    // State
+    pub fn connection_state(&self) -> &ConnectionState;
+    pub fn diagnostic_state(&self) -> &DiagnosticSessionState;
+    pub fn discovery(&self) -> Option<&DiscoveryProfile>;
+    pub fn visible_ecus(&self) -> &[VisibleEcu];
+
+    // Raw capture
+    pub fn set_raw_capture_enabled(&mut self, enabled: bool);
+    pub fn set_raw_capture_directory(&mut self, dir: impl Into<PathBuf>);
+    pub fn raw_capture_path(&self) -> Option<&Path>;
+    pub fn start_raw_capture(&mut self, path: &Path, metadata: &CaptureMetadata) -> Result<(), Obd2Error>;
+    pub fn stop_raw_capture(&mut self) -> Result<Option<PathBuf>, Obd2Error>;
 
     // Escape hatch
     pub async fn raw_request(&mut self, service: u8, data: &[u8], target: Target) -> Result<Vec<u8>, Obd2Error>;
@@ -216,11 +264,14 @@ pub trait Transport: Send + Sync {
 // Adapter — protocol interpreter
 #[async_trait]
 pub trait Adapter: Send {
-    async fn initialize(&mut self) -> Result<AdapterInfo, Obd2Error>;
+    async fn initialize(&mut self) -> Result<InitializationReport, Obd2Error>;
     async fn request(&mut self, req: &ServiceRequest) -> Result<Vec<u8>, Obd2Error>;
+    async fn routed_request(&mut self, req: &RoutedRequest) -> Result<Vec<u8>, Obd2Error>;
     async fn supported_pids(&mut self) -> Result<HashSet<Pid>, Obd2Error>;
     async fn battery_voltage(&mut self) -> Result<Option<f64>, Obd2Error>;
     fn info(&self) -> &AdapterInfo;
+    fn drain_events(&mut self) -> Vec<AdapterEvent>;
+    fn transport_mut(&mut self) -> Option<&mut dyn Transport>;
 }
 
 // Storage — persistence
@@ -354,16 +405,17 @@ let loaded = store.get_vehicle("1GCHK23224F000001").await?;
 | `crates/obd2-core/src/adapter/mock.rs` | Mock adapter | `MockAdapter` |
 | `crates/obd2-core/src/adapter/detect.rs` | Chipset detection | `detect_chipset()` |
 | `crates/obd2-core/src/vehicle/mod.rs` | Vehicle spec types | `VehicleSpec`, `VehicleProfile`, `SpecRegistry`, `ModuleId`, `Protocol`, `ThresholdSet` |
-| `crates/obd2-core/src/vehicle/vin.rs` | Offline VIN decoder | `decode()`, `VinDecoded` |
+| `crates/obd2-core/src/vehicle/vin.rs` | Offline VIN decoder | `decode()`, `DecodedVin` |
 | `crates/obd2-core/src/vehicle/nhtsa.rs` | NHTSA online VIN lookup | `decode_vin()` |
 | `crates/obd2-core/src/vehicle/loader.rs` | YAML spec parser | — |
 | `crates/obd2-core/src/session/mod.rs` | Session orchestrator | `Session` |
 | `crates/obd2-core/src/session/poller.rs` | Polling engine | `PollConfig`, `PollEvent`, `PollHandle` |
 | `crates/obd2-core/src/session/threshold.rs` | Threshold evaluation | `evaluate()`, `ThresholdResult`, `AlertLevel` |
 | `crates/obd2-core/src/session/diagnostics.rs` | DTC enrichment & rules | `DiagnosticRule`, `KnownIssue` |
-| `crates/obd2-core/src/session/diag_session.rs` | Diag session control | `enter_session()`, `security_access()`, `actuator_control()` |
+| `crates/obd2-core/src/session/diag_session.rs` | Diag session types | `SessionState`, `KeyFunction` |
 | `crates/obd2-core/src/session/enhanced.rs` | Enhanced PID helpers | `find_service_id_from_spec()`, `list_module_pids()` |
-| `crates/obd2-core/src/session/modes.rs` | Mode implementations | `read_o2_monitoring()`, `read_all_o2_monitoring()` |
+| `crates/obd2-core/src/session/modes.rs` | Internal mode decode | `decode_readiness()`, `decode_dtc_bytes()`, `decode_test_results()` |
+| `crates/obd2-core/src/protocol/j1939.rs` | J1939 protocol types | `Pgn`, `J1939Dtc`, `Eec1`, `Ccvs`, `Et1`, `Eflp1`, `Lfe` |
 | `crates/obd2-core/src/store/mod.rs` | Storage traits | `VehicleStore`, `SessionStore` |
 | `crates/obd2-store-sqlite/src/lib.rs` | SQLite storage | `SqliteStore` |
 
@@ -372,20 +424,21 @@ let loaded = store.get_vehicle("1GCHK23224F000001").await?;
 | Mode | Service ID | Session Method | Description |
 |------|-----------|----------------|-------------|
 | 01 | 0x01 | `read_pid()`, `read_pids()`, `supported_pids()` | Current data |
-| 02 | 0x02 | via `raw_request()` | Freeze frame data |
-| 03 | 0x03 | `read_dtcs()` | Stored DTCs |
-| 04 | 0x04 | `clear_dtcs()` | Clear DTCs + reset monitors |
-| 05 | 0x05 | `read_o2_monitoring()` | O2 sensor monitoring |
-| 06 | 0x06 | via `raw_request()` | On-board test results |
+| 02 | 0x02 | `read_freeze_frame()` | Freeze frame data |
+| 03 | 0x03 | `read_dtcs()`, `read_all_dtcs()` | Stored DTCs |
+| 04 | 0x04 | `clear_dtcs()`, `clear_dtcs_on_module()` | Clear DTCs + reset monitors |
+| 05 | 0x05 | `read_o2_monitoring()`, `read_all_o2_monitoring()` | O2 sensor monitoring |
+| 06 | 0x06 | `read_test_results()` | On-board test results |
 | 07 | 0x07 | `read_pending_dtcs()` | Pending DTCs |
 | 08 | 0x08 | via `raw_request()` | Control system tests |
-| 09 | 0x09 | `read_vin()`, `identify_vehicle()` | Vehicle information |
+| 09 | 0x09 | `read_vin()`, `read_vehicle_info()`, `identify_vehicle()` | Vehicle information |
 | 0A | 0x0A | `read_permanent_dtcs()` | Permanent DTCs |
-| 10 | 0x10 | `diag_session::enter_session()` | Diagnostic session control |
+| 10 | 0x10 | `enter_diagnostic_session()`, `end_diagnostic_session()` | Diagnostic session control |
 | 22 | 0x22 | `read_enhanced()` | Enhanced PIDs |
-| 27 | 0x27 | `diag_session::security_access()` | Security access |
-| 2F | 0x2F | `diag_session::actuator_control()` | Actuator control |
-| 3E | 0x3E | via `raw_request()` | Tester present (keep-alive) |
+| 27 | 0x27 | `security_access()` | Security access |
+| 2F | 0x2F | `actuator_control()`, `actuator_release()` | Actuator control |
+| 3E | 0x3E | `tester_present()` | Tester present (keep-alive) |
+| J1939 | 0xEA | `read_j1939_pgn()`, `read_j1939_dtcs()` | J1939 PGN requests |
 
 ## Feature Flags
 
@@ -427,6 +480,7 @@ cargo test --package obd2-core test_full_session_lifecycle
 The test suite uses `MockAdapter` exclusively — no hardware required. The mock simulates a realistic vehicle with:
 - Configurable VIN (default or custom via `with_vin()`)
 - Configurable DTCs (via `set_dtcs()`)
-- Realistic PID responses (RPM=680, coolant=85°C, speed=0, etc.)
+- Realistic PID responses (RPM=680, coolant=50°C, speed=0, throttle~14.9%, etc.)
 - Battery voltage (14.4V)
+- J1939 PGN responses (EEC1, CCVS, ET1, EFLP1, LFE, DM1)
 - All standard mode responses

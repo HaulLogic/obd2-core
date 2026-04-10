@@ -1,7 +1,7 @@
 # J1939 Support Requirements
 
-**Date:** 2026-04-03  
-**Status:** Proposed
+**Date:** 2026-04-09
+**Status:** Scoped, incomplete
 
 ## Problem
 

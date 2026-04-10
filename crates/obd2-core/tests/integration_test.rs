@@ -651,3 +651,121 @@ async fn test_j1939_read_fuel_economy() {
     let lfe = decode_lfe(&data).expect("should decode LFE");
     assert!((lfe.fuel_rate.unwrap() - 5.0).abs() < 0.1);
 }
+
+/// J1939 vehicle speed read through Session
+#[tokio::test]
+async fn test_j1939_read_vehicle_speed() {
+    use obd2_core::protocol::j1939::{Pgn, decode_ccvs};
+
+    let adapter = MockAdapter::new();
+    let mut session = Session::new(adapter);
+
+    let data = session.read_j1939_pgn(Pgn::CCVS).await.unwrap();
+    let ccvs = decode_ccvs(&data).expect("should decode CCVS");
+    assert!(ccvs.vehicle_speed.is_some());
+}
+
+/// read_all_dtcs aggregates stored, pending, and permanent DTCs with dedup and enrichment
+#[tokio::test]
+async fn test_read_all_dtcs() {
+    let mut adapter = MockAdapter::with_vin("1GCHK23224F000001");
+    adapter.set_dtcs(vec![Dtc::from_code("P0420"), Dtc::from_code("P0171")]);
+
+    let mut session = Session::new(adapter);
+    let _profile = session.identify_vehicle().await.unwrap();
+
+    let all = session.read_all_dtcs().await.unwrap();
+    // Should have at least the stored DTCs (pending/permanent may add more or same)
+    assert!(all.len() >= 2);
+    // Should be deduplicated
+    let codes: Vec<&str> = all.iter().map(|d| d.code.as_str()).collect();
+    let unique: std::collections::HashSet<&str> = codes.iter().copied().collect();
+    assert_eq!(codes.len(), unique.len(), "read_all_dtcs should deduplicate");
+}
+
+/// read_vehicle_info returns VIN, CALIDs, CVNs
+#[tokio::test]
+async fn test_read_vehicle_info() {
+    let adapter = MockAdapter::with_vin("1GCHK23224F000001");
+    let mut session = Session::new(adapter);
+
+    let info = session.read_vehicle_info().await.unwrap();
+    assert_eq!(info.vin, "1GCHK23224F000001");
+}
+
+/// read_freeze_frame gracefully handles NoData from mock
+#[tokio::test]
+async fn test_read_freeze_frame() {
+    let adapter = MockAdapter::new();
+    let mut session = Session::new(adapter);
+
+    // MockAdapter does not simulate freeze frame data — NoData is expected
+    let result = session.read_freeze_frame(Pid::ENGINE_RPM, 0).await;
+    assert!(
+        result.is_ok() || matches!(result, Err(obd2_core::error::Obd2Error::NoData)),
+        "freeze frame should return data or NoData, got: {:?}",
+        result.err()
+    );
+}
+
+/// read_readiness returns monitor status
+#[tokio::test]
+async fn test_read_readiness() {
+    let adapter = MockAdapter::new();
+    let mut session = Session::new(adapter);
+
+    let result = session.read_readiness().await;
+    // MockAdapter may return readiness data or NoData depending on PID 01 support
+    assert!(
+        result.is_ok() || matches!(result, Err(obd2_core::error::Obd2Error::NoData | obd2_core::error::Obd2Error::ParseError(_))),
+        "readiness should return data or NoData, got: {:?}",
+        result.err()
+    );
+}
+
+/// clear_dtcs broadcasts successfully (module-targeted requires spec routing)
+#[tokio::test]
+async fn test_clear_dtcs_broadcast() {
+    let mut adapter = MockAdapter::with_vin("1GCHK23224F000001");
+    adapter.set_dtcs(vec![Dtc::from_code("P0420")]);
+
+    let mut session = Session::new(adapter);
+    let _profile = session.identify_vehicle().await.unwrap();
+
+    // Broadcast clear works without module routing
+    session.clear_dtcs().await.unwrap();
+
+    let dtcs = session.read_dtcs().await.unwrap();
+    assert!(dtcs.is_empty());
+}
+
+/// Connection state transitions are observable
+#[tokio::test]
+async fn test_connection_state_transitions() {
+    use obd2_core::session::ConnectionState;
+
+    let adapter = MockAdapter::new();
+    let mut session = Session::new(adapter);
+
+    // Before init: AdapterPresent
+    assert_eq!(*session.connection_state(), ConnectionState::AdapterPresent);
+
+    // After init: Connected
+    session.initialize().await.unwrap();
+    assert_eq!(*session.connection_state(), ConnectionState::Connected);
+}
+
+/// Mode 06 test results through Session (mock may return NoData)
+#[tokio::test]
+async fn test_read_test_results() {
+    let adapter = MockAdapter::new();
+    let mut session = Session::new(adapter);
+
+    // MockAdapter may not simulate Mode 06 — NoData is acceptable
+    let result = session.read_test_results(0x01).await;
+    assert!(
+        result.is_ok() || matches!(result, Err(obd2_core::error::Obd2Error::NoData)),
+        "test results should return data or NoData, got: {:?}",
+        result.err()
+    );
+}

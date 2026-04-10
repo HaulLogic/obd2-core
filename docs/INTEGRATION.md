@@ -72,7 +72,7 @@ use obd2_core::transport::serial::SerialTransport;
 use obd2_core::session::Session;
 
 # async fn example() -> Result<(), obd2_core::error::Obd2Error> {
-let transport = SerialTransport::new("/dev/ttyUSB0", 115200).await?;
+let transport = SerialTransport::new("/dev/ttyUSB0", 115200)?;
 let adapter = Elm327Adapter::new(Box::new(transport));
 let mut session = Session::new(adapter);
 # Ok(())
@@ -85,9 +85,10 @@ let mut session = Session::new(adapter);
 use obd2_core::adapter::elm327::Elm327Adapter;
 use obd2_core::transport::ble::BleTransport;
 use obd2_core::session::Session;
+use std::time::Duration;
 
 # async fn example() -> Result<(), obd2_core::error::Obd2Error> {
-let transport = BleTransport::connect_first().await?;
+let transport = BleTransport::scan_and_connect(None, Duration::from_secs(5)).await?;
 let adapter = Elm327Adapter::new(Box::new(transport));
 let mut session = Session::new(adapter);
 # Ok(())
@@ -140,6 +141,38 @@ if let Some(discovery) = session.discovery() {
     println!("Protocol choice source: {:?}", discovery.protocol_choice_source);
     println!("Visible ECUs: {}", discovery.visible_ecus.len());
 }
+```
+
+`ConnectionState::IgnitionOff` means the adapter reported a low-power / ignition-off
+condition, currently surfaced from ELM/STN `LP ALERT` or `!LP ALERT` responses.
+Any later successful `Session` request will move the state back to `Connected`.
+
+### 5. Optional raw protocol capture
+
+`Session` owns raw capture configuration and lifecycle. For debug-only automatic
+capture, configure the session before initialization:
+
+```rust
+session.set_raw_capture_enabled(true);
+session.set_raw_capture_directory("raw-captures");
+```
+
+For explicit UI-controlled capture, call the manual session methods instead of
+reaching through the adapter or transport:
+
+```rust
+use std::path::Path;
+use obd2_core::transport::CaptureMetadata;
+
+let metadata = CaptureMetadata {
+    transport_type: "serial".into(),
+    port_or_device: "/dev/ttyUSB0".into(),
+    baud_rate: Some(115200),
+};
+
+session.start_raw_capture(Path::new("captures/manual.obd2raw"), &metadata)?;
+// ... perform reads through Session ...
+let capture_path = session.stop_raw_capture()?;
 ```
 
 ## Standard OBD Operations
@@ -408,8 +441,81 @@ Use these rules when building on the library:
 5. Load vehicle specs before identification if you need custom routing or enhanced data.
 6. Use discovery and raw captures when validating support across vehicle years and adapter types.
 
+## Threshold Evaluation
+
+The library can evaluate PID readings against spec-defined thresholds:
+
+```rust
+use obd2_core::protocol::pid::Pid;
+use obd2_core::vehicle::AlertLevel;
+
+// After identify_vehicle() — requires a matched spec with thresholds
+if let Some(result) = session.evaluate_threshold(Pid::COOLANT_TEMP, 110.0) {
+    match result.level {
+        AlertLevel::Warning => eprintln!("Warning: {}", result.message),
+        AlertLevel::Critical => eprintln!("CRITICAL: {}", result.message),
+        AlertLevel::Normal => {}
+    }
+}
+
+// Enhanced PID thresholds (by DID)
+if let Some(result) = session.evaluate_enhanced_threshold(0x1170, 5000.0) {
+    eprintln!("{}: {}", result.level, result.message);
+}
+```
+
+## J1939 Heavy-Duty Protocol
+
+J1939 session methods exist for reading PGNs from heavy-duty vehicles via CAN 29-bit.
+
+**Note:** J1939 remains a separate workstream. The session-first read path exists and is
+tested, but full J1939 addressed routing, transport-protocol reassembly, and discovery
+integration are not yet complete. Use these APIs for basic broadcast PGN reads.
+
+```rust
+use obd2_core::protocol::j1939::{Pgn, decode_eec1, decode_ccvs, decode_et1, decode_eflp1, decode_lfe};
+
+// Read engine RPM and torque
+let data = session.read_j1939_pgn(Pgn::EEC1).await?;
+if let Some(eec1) = decode_eec1(&data) {
+    println!("RPM: {:?}, Torque: {:?}%", eec1.engine_rpm, eec1.actual_torque_pct);
+}
+
+// Read vehicle speed
+let data = session.read_j1939_pgn(Pgn::CCVS).await?;
+if let Some(ccvs) = decode_ccvs(&data) {
+    println!("Speed: {:?} km/h", ccvs.vehicle_speed);
+}
+
+// Read temperatures
+let data = session.read_j1939_pgn(Pgn::ET1).await?;
+if let Some(et1) = decode_et1(&data) {
+    println!("Coolant: {:?}°C, Fuel: {:?}°C", et1.coolant_temp, et1.fuel_temp);
+}
+
+// Read pressures
+let data = session.read_j1939_pgn(Pgn::EFLP1).await?;
+if let Some(eflp1) = decode_eflp1(&data) {
+    println!("Oil: {:?} kPa", eflp1.oil_pressure);
+}
+
+// Read fuel rate
+let data = session.read_j1939_pgn(Pgn::LFE).await?;
+if let Some(lfe) = decode_lfe(&data) {
+    println!("Fuel rate: {:?} L/h", lfe.fuel_rate);
+}
+
+// Read J1939 DTCs (DM1 — SPN+FMI format)
+let dtcs = session.read_j1939_dtcs().await?;
+for dtc in &dtcs {
+    println!("SPN {}, FMI {} — {}", dtc.spn, dtc.fmi, dtc.fmi_description());
+}
+```
+
 ## Current Scope
 
-This guide covers the current rewritten non-J1939 surface.
+This guide covers the current rewritten pre-`1.0` surface.
 
-J1939 remains a separate workstream and should not be treated as complete `1.0` integration guidance yet.
+The non-J1939 surface is the primary supported integration path. J1939 session-level
+read methods exist and are tested, but the full J1939 workstream (addressed routing,
+transport-protocol reassembly, discovery integration) is not yet complete.

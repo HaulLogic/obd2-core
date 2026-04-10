@@ -105,6 +105,14 @@ impl Elm327Adapter {
         if trimmed.contains("BUS BUSY") {
             self.push_event(AdapterEventKind::BusBusy, Some(trimmed.to_string()));
         }
+        if trimmed.contains("LP ALERT") {
+            self.push_event(
+                AdapterEventKind::RecoveryAction {
+                    action: "LP ALERT".into(),
+                },
+                Some(trimmed.to_string()),
+            );
+        }
         if trimmed.contains("BUS ERROR") {
             self.push_event(AdapterEventKind::BusError, Some(trimmed.to_string()));
         }
@@ -898,6 +906,24 @@ mod tests {
 
         assert!(result.is_err());
         assert!(events.iter().any(|event| matches!(event.kind, AdapterEventKind::Stopped)));
+    }
+
+    #[tokio::test]
+    async fn test_elm327_records_low_power_alert_event() {
+        let mut transport = MockTransport::new();
+        setup_init(&mut transport);
+        transport.expect("010C", "LP ALERT\r>");
+
+        let mut adapter = Elm327Adapter::new(Box::new(transport));
+        adapter.initialize().await.unwrap();
+        let result = adapter.request(&ServiceRequest::read_pid(Pid::ENGINE_RPM)).await;
+        let events = adapter.drain_events();
+
+        assert!(result.is_err());
+        assert!(events.iter().any(|event| matches!(
+            &event.kind,
+            AdapterEventKind::RecoveryAction { action } if action == "LP ALERT"
+        )));
     }
 
     #[tokio::test]

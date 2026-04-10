@@ -60,21 +60,41 @@ pub struct Session<A: Adapter> {
     request_in_flight: bool,
 }
 
+/// Lifecycle state of the adapter/vehicle connection.
+///
+/// Transitions are driven by adapter events and session operations.
+/// Consumers can inspect this via [`Session::connection_state()`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectionState {
+    /// Adapter object exists but has not been initialized.
     AdapterPresent,
+    /// Adapter has been reset and configured but protocol is not yet confirmed.
     AdapterInitialized,
+    /// Protocol auto-detection or explicit probing is in progress.
     ProtocolNegotiating,
+    /// Communication with the vehicle is active.
     Connected,
+    /// Adapter reported ignition-off / low-voltage condition (e.g., ELM/STN `LP ALERT`).
+    /// Any successful subsequent request transitions back to `Connected`.
     IgnitionOff,
+    /// Protocol probe exhausted all candidates without success.
     UnsupportedProtocol,
+    /// Communication lost (adapter removed, transport failure, etc.).
     Disconnected,
+    /// Unrecoverable error with descriptive message.
     Error(String),
 }
 
+/// Configuration for automatic raw protocol capture.
+///
+/// In debug builds, capture is enabled by default and writes `.obd2raw` files
+/// to the configured directory. The file is renamed to include the VIN after
+/// vehicle identification.
 #[derive(Debug, Clone)]
 pub struct RawCaptureConfig {
+    /// Whether automatic capture is enabled (default: `true` in debug, `false` in release).
     pub enabled: bool,
+    /// Directory for capture files (default: `"raw-captures"`).
     pub directory: PathBuf,
     current_path: Option<PathBuf>,
 }
@@ -148,14 +168,17 @@ impl<A: Adapter> Session<A> {
         self.discovery.as_ref()
     }
 
+    /// Current connection lifecycle state.
     pub fn connection_state(&self) -> &ConnectionState {
         &self.connection_state
     }
 
+    /// Current diagnostic session state (Default, Extended, or Programming).
     pub fn diagnostic_state(&self) -> &DiagnosticSessionState {
         &self.diagnostic_state
     }
 
+    /// ECUs observed during communication (may differ from spec-declared topology).
     pub fn visible_ecus(&self) -> &[VisibleEcu] {
         &self.visible_ecus
     }
@@ -173,6 +196,50 @@ impl<A: Adapter> Session<A> {
     /// Current raw capture path, if capture is active.
     pub fn raw_capture_path(&self) -> Option<&Path> {
         self.raw_capture.current_path.as_deref()
+    }
+
+    /// Start a manual raw capture on the session-owned transport.
+    ///
+    /// This preserves the session-first integration boundary for applications that
+    /// need explicit capture controls without reaching through the adapter.
+    pub fn start_raw_capture(
+        &mut self,
+        path: &Path,
+        metadata: &CaptureMetadata,
+    ) -> Result<(), Obd2Error> {
+        let transport = self.adapter.transport_mut().ok_or_else(|| {
+            Obd2Error::Transport("raw capture is unavailable: adapter has no transport".into())
+        })?;
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                Obd2Error::Transport(format!(
+                    "failed to create raw capture directory {}: {}",
+                    parent.display(),
+                    e
+                ))
+            })?;
+        }
+
+        if transport.start_raw_capture(path, metadata) {
+            self.raw_capture.current_path = Some(path.to_path_buf());
+            Ok(())
+        } else {
+            Err(Obd2Error::Transport(
+                "failed to start raw capture on the active transport".into(),
+            ))
+        }
+    }
+
+    /// Stop a manual raw capture on the session-owned transport.
+    pub fn stop_raw_capture(&mut self) -> Result<Option<PathBuf>, Obd2Error> {
+        let transport = self.adapter.transport_mut().ok_or_else(|| {
+            Obd2Error::Transport("raw capture is unavailable: adapter has no transport".into())
+        })?;
+
+        let path = transport.stop_raw_capture();
+        self.raw_capture.current_path = None;
+        Ok(path)
     }
 
     // -- Mode 01: Current Data --
@@ -591,6 +658,11 @@ impl<A: Adapter> Session<A> {
 
     // -- Diagnostic Sessions --
 
+    /// Enter a diagnostic session on a specific module (UDS Mode 0x10).
+    ///
+    /// Extended or Programming sessions unlock security-gated operations.
+    /// Call [`security_access`](Self::security_access) after entering Extended
+    /// to unlock actuator control on a module.
     pub async fn enter_diagnostic_session(
         &mut self,
         session: DiagSession,
@@ -616,6 +688,14 @@ impl<A: Adapter> Session<A> {
         Ok(())
     }
 
+    /// Perform seed-key security access on a module (UDS Mode 0x27).
+    ///
+    /// Requests a seed from the module, computes the key using `key_fn`,
+    /// and sends the key back. On success, the module is marked as unlocked
+    /// in the diagnostic session state.
+    ///
+    /// If the seed is all zeros, the module is already unlocked and no key
+    /// exchange is performed.
     pub async fn security_access(
         &mut self,
         module: ModuleId,
@@ -656,6 +736,10 @@ impl<A: Adapter> Session<A> {
         Ok(())
     }
 
+    /// Send an actuator control command to a module (UDS Mode 0x2F).
+    ///
+    /// Requires an active Extended diagnostic session with the module
+    /// security-unlocked. Returns [`Obd2Error::SecurityRequired`] otherwise.
     pub async fn actuator_control(
         &mut self,
         did: u16,
@@ -685,6 +769,7 @@ impl<A: Adapter> Session<A> {
         Ok(())
     }
 
+    /// Release actuator control, returning the DID to ECU control (UDS Mode 0x2F sub 0x00).
     pub async fn actuator_release(&mut self, did: u16, module: ModuleId) -> Result<(), Obd2Error> {
         self.ensure_initialized().await?;
         let req = ServiceRequest {
@@ -696,6 +781,9 @@ impl<A: Adapter> Session<A> {
         Ok(())
     }
 
+    /// Send a tester-present keepalive to a module (UDS Mode 0x3E).
+    ///
+    /// Prevents the module from timing out the active diagnostic session.
     pub async fn tester_present(&mut self, module: ModuleId) -> Result<(), Obd2Error> {
         self.ensure_initialized().await?;
         let req = ServiceRequest {
@@ -707,6 +795,7 @@ impl<A: Adapter> Session<A> {
         Ok(())
     }
 
+    /// End the diagnostic session, returning the module to Default mode (UDS Mode 0x10 sub 0x01).
     pub async fn end_diagnostic_session(&mut self, module: ModuleId) -> Result<(), Obd2Error> {
         self.ensure_initialized().await?;
         let req = ServiceRequest {
@@ -767,7 +856,10 @@ impl<A: Adapter> Session<A> {
         self.adapter.info()
     }
 
-    /// Mutable access to the underlying adapter.
+    /// Mutable access to the underlying adapter (escape hatch).
+    ///
+    /// Prefer session-level methods for normal operations. Direct adapter
+    /// access bypasses routing, lifecycle, and single-flight safety.
     pub fn adapter_mut(&mut self) -> &mut A {
         &mut self.adapter
     }
@@ -783,6 +875,9 @@ impl<A: Adapter> Session<A> {
         let events = self.adapter.drain_events();
         self.request_in_flight = false;
         self.apply_adapter_events(&events);
+        if result.is_ok() {
+            self.mark_connection_active_if_recovered();
+        }
         result
     }
 
@@ -872,6 +967,15 @@ impl<A: Adapter> Session<A> {
         ));
     }
 
+    fn mark_connection_active_if_recovered(&mut self) {
+        if matches!(
+            &self.connection_state,
+            ConnectionState::IgnitionOff | ConnectionState::Disconnected | ConnectionState::Error(_)
+        ) {
+            self.connection_state = ConnectionState::Connected;
+        }
+    }
+
     async fn query_supported_pids(&mut self) -> Result<HashSet<Pid>, Obd2Error> {
         let mut all_supported = HashSet::new();
 
@@ -909,6 +1013,9 @@ impl<A: Adapter> Session<A> {
         let events = self.adapter.drain_events();
         self.request_in_flight = false;
         self.apply_adapter_events(&events);
+        if result.is_ok() {
+            self.mark_connection_active_if_recovered();
+        }
         result
     }
 
@@ -965,6 +1072,9 @@ impl<A: Adapter> Session<A> {
                 }
                 AdapterEventKind::Err94 | AdapterEventKind::LowVoltageReset => {
                     self.connection_state = ConnectionState::Disconnected;
+                }
+                AdapterEventKind::RecoveryAction { action } if action == "LP ALERT" => {
+                    self.connection_state = ConnectionState::IgnitionOff;
                 }
                 AdapterEventKind::UnsupportedProtocol => {
                     self.connection_state = ConnectionState::UnsupportedProtocol;
@@ -1371,6 +1481,47 @@ mod tests {
         let renamed = session.raw_capture_path().unwrap().to_path_buf();
         assert!(renamed.exists());
         assert!(renamed.file_name().unwrap().to_string_lossy().contains("1GCHK23224F000001"));
+    }
+
+    #[tokio::test]
+    async fn test_session_enters_ignition_off_on_low_power_alert_and_recovers() {
+        let mut transport = MockTransport::new();
+        setup_elm_init_can11(&mut transport);
+        transport.expect("010C", "LP ALERT\r>");
+        transport.expect("010C", "41 0C 0A A0\r>");
+
+        let adapter = Elm327Adapter::new(Box::new(transport));
+        let mut session = Session::new(adapter);
+        session.initialize().await.unwrap();
+
+        let first = session.read_pid(Pid::ENGINE_RPM).await;
+        assert!(first.is_err());
+        assert!(matches!(session.connection_state(), &ConnectionState::IgnitionOff));
+
+        let second = session.read_pid(Pid::ENGINE_RPM).await.unwrap();
+        assert!(second.value.as_f64().unwrap() > 0.0);
+        assert!(matches!(session.connection_state(), &ConnectionState::Connected));
+    }
+
+    #[test]
+    fn test_session_manual_raw_capture_owned_by_session() {
+        let transport = MockTransport::new();
+        let adapter = Elm327Adapter::new(Box::new(LoggingTransport::new(transport)));
+        let mut session = Session::new(adapter);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manual.obd2raw");
+        let metadata = CaptureMetadata {
+            transport_type: "mock".into(),
+            port_or_device: "mock".into(),
+            baud_rate: None,
+        };
+
+        session.start_raw_capture(&path, &metadata).unwrap();
+        assert_eq!(session.raw_capture_path(), Some(path.as_path()));
+
+        let stopped = session.stop_raw_capture().unwrap();
+        assert_eq!(stopped.as_deref(), Some(path.as_path()));
+        assert!(session.raw_capture_path().is_none());
     }
 
     #[tokio::test]
