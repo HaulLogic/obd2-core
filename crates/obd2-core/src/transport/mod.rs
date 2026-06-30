@@ -4,21 +4,21 @@
 //! (serial port, BLE GATT, WiFi socket, etc.). This is an open trait —
 //! anyone can implement it for custom transports.
 
-pub mod mock;
+#[cfg(feature = "ble")]
+pub mod ble;
 pub mod logging;
+pub mod mock;
 #[cfg(feature = "serial")]
 pub mod serial;
 #[cfg(feature = "ble")]
-pub mod ble;
-#[cfg(feature = "ble")]
-pub use ble::{ADAPTER_NAME_PATTERNS, is_adapter_match};
-pub use logging::{LoggingTransport, CaptureMetadata, parse_raw_capture};
+pub use ble::{is_adapter_match, ADAPTER_NAME_PATTERNS};
+pub use logging::{parse_raw_capture, CaptureMetadata, LoggingTransport};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
 use crate::error::Obd2Error;
+use async_trait::async_trait;
 
 /// Callback invoked on each raw read chunk before response assembly.
 /// Used by LoggingTransport to record transport-level reads.

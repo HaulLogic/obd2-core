@@ -254,7 +254,8 @@ mod tests {
 
     #[test]
     fn test_resolve_profile_without_spec_has_adapter_only() {
-        let profile = resolve_discovery_profile(&adapter_info(Protocol::Can11Bit500), None, &[], &[]);
+        let profile =
+            resolve_discovery_profile(&adapter_info(Protocol::Can11Bit500), None, &[], &[]);
         assert_eq!(profile.selected_protocol, Protocol::Can11Bit500);
         assert!(profile.active_bus.is_none());
         assert!(profile.modules.is_empty());
@@ -263,7 +264,8 @@ mod tests {
     #[test]
     fn test_resolve_profile_matches_bus_by_protocol() {
         let spec = make_spec();
-        let profile = resolve_discovery_profile(&adapter_info(Protocol::J1850Vpw), Some(&spec), &[], &[]);
+        let profile =
+            resolve_discovery_profile(&adapter_info(Protocol::J1850Vpw), Some(&spec), &[], &[]);
         assert_eq!(profile.active_bus.as_ref().unwrap().id.0, "j1850vpw");
         assert!(profile.modules.contains_key(&ModuleId::new("ecm")));
         assert!(profile.modules.contains_key(&ModuleId::new("tcm")));
@@ -280,14 +282,16 @@ mod tests {
             modules: vec![],
             description: None,
         }];
-        let profile = resolve_discovery_profile(&adapter_info(Protocol::Auto), Some(&spec), &[], &[]);
+        let profile =
+            resolve_discovery_profile(&adapter_info(Protocol::Auto), Some(&spec), &[], &[]);
         assert_eq!(profile.active_bus.as_ref().unwrap().id.0, "kline");
     }
 
     #[test]
     fn test_resolve_profile_collects_all_modules_when_bus_unknown() {
         let spec = make_spec();
-        let profile = resolve_discovery_profile(&adapter_info(Protocol::Auto), Some(&spec), &[], &[]);
+        let profile =
+            resolve_discovery_profile(&adapter_info(Protocol::Auto), Some(&spec), &[], &[]);
         assert!(profile.active_bus.is_none());
         assert_eq!(profile.modules.len(), 3);
     }

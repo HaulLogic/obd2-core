@@ -5,13 +5,13 @@
 //! AT commands and hex strings, while a raw CAN adapter would frame
 //! differently.
 
-use std::collections::HashSet;
-use async_trait::async_trait;
 use crate::error::Obd2Error;
 use crate::protocol::pid::Pid;
 use crate::protocol::service::ServiceRequest;
 use crate::transport::Transport;
 use crate::vehicle::{KLineInit, PhysicalAddress, Protocol};
+use async_trait::async_trait;
+use std::collections::HashSet;
 
 pub mod detect;
 pub mod elm327;
@@ -122,7 +122,8 @@ pub trait Adapter: Send {
             service_id: req.service_id,
             data: req.data.clone(),
             target,
-        }).await
+        })
+        .await
     }
 
     /// Query which standard PIDs are supported (Mode 01 PID 00/20/40/60 bitmaps).

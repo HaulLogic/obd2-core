@@ -2,9 +2,7 @@
 
 use crate::error::Obd2Error;
 use crate::protocol::dtc::{Dtc, DtcStatus};
-use crate::protocol::service::{
-    MonitorStatus, ReadinessStatus, TestResult,
-};
+use crate::protocol::service::{MonitorStatus, ReadinessStatus, TestResult};
 /// Decode Mode 06 on-board monitoring test results.
 pub(crate) fn decode_test_results(data: &[u8]) -> Vec<TestResult> {
     // Mode 06 response: [TID, COMP_ID, test_val_hi, test_val_lo, min_hi, min_lo, max_hi, max_lo]

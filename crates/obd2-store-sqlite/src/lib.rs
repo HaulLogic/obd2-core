@@ -11,16 +11,16 @@
 //! let store = SqliteStore::open(Path::new("obd2.db")).unwrap();
 //! ```
 
+use async_trait::async_trait;
+use obd2_core::error::Obd2Error;
+use obd2_core::protocol::dtc::Dtc;
+use obd2_core::protocol::enhanced::Reading;
+use obd2_core::protocol::pid::Pid;
+use obd2_core::store::{SessionStore, VehicleStore};
+use obd2_core::vehicle::{ThresholdSet, VehicleProfile};
+use rusqlite::{params, Connection};
 use std::path::Path;
 use std::sync::Mutex;
-use async_trait::async_trait;
-use rusqlite::{Connection, params};
-use obd2_core::error::Obd2Error;
-use obd2_core::protocol::pid::Pid;
-use obd2_core::protocol::enhanced::Reading;
-use obd2_core::protocol::dtc::Dtc;
-use obd2_core::store::{VehicleStore, SessionStore};
-use obd2_core::vehicle::{VehicleProfile, ThresholdSet};
 
 /// SQLite storage backend.
 pub struct SqliteStore {
@@ -30,26 +30,31 @@ pub struct SqliteStore {
 impl SqliteStore {
     /// Open or create a SQLite database at the given path.
     pub fn open(path: &Path) -> Result<Self, Obd2Error> {
-        let conn = Connection::open(path)
-            .map_err(|e| Obd2Error::Other(Box::new(e)))?;
-        let store = Self { conn: Mutex::new(conn) };
+        let conn = Connection::open(path).map_err(|e| Obd2Error::Other(Box::new(e)))?;
+        let store = Self {
+            conn: Mutex::new(conn),
+        };
         store.create_tables()?;
         Ok(store)
     }
 
     /// Create an in-memory SQLite database (for testing).
     pub fn in_memory() -> Result<Self, Obd2Error> {
-        let conn = Connection::open_in_memory()
-            .map_err(|e| Obd2Error::Other(Box::new(e)))?;
-        let store = Self { conn: Mutex::new(conn) };
+        let conn = Connection::open_in_memory().map_err(|e| Obd2Error::Other(Box::new(e)))?;
+        let store = Self {
+            conn: Mutex::new(conn),
+        };
         store.create_tables()?;
         Ok(store)
     }
 
     fn create_tables(&self) -> Result<(), Obd2Error> {
-        let conn = self.conn.lock().map_err(|e| Obd2Error::Other(Box::new(
-            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-        )))?;
+        let conn = self.conn.lock().map_err(|e| {
+            Obd2Error::Other(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )))
+        })?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS vehicles (
                 vin TEXT PRIMARY KEY,
@@ -80,8 +85,9 @@ impl SqliteStore {
             );
 
             CREATE INDEX IF NOT EXISTS idx_readings_vin ON readings(vin);
-            CREATE INDEX IF NOT EXISTS idx_dtc_events_vin ON dtc_events(vin);"
-        ).map_err(|e| Obd2Error::Other(Box::new(e)))?;
+            CREATE INDEX IF NOT EXISTS idx_dtc_events_vin ON dtc_events(vin);",
+        )
+        .map_err(|e| Obd2Error::Other(Box::new(e)))?;
         Ok(())
     }
 }
@@ -99,24 +105,31 @@ impl VehicleStore for SqliteStore {
         let data = serde_json::to_string(&SerializableProfile::from(profile))
             .map_err(|e| Obd2Error::Other(Box::new(e)))?;
 
-        let conn = self.conn.lock().map_err(|e| Obd2Error::Other(Box::new(
-            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-        )))?;
+        let conn = self.conn.lock().map_err(|e| {
+            Obd2Error::Other(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )))
+        })?;
         conn.execute(
             "INSERT OR REPLACE INTO vehicles (vin, data) VALUES (?1, ?2)",
             params![vin, data],
-        ).map_err(|e| Obd2Error::Other(Box::new(e)))?;
+        )
+        .map_err(|e| Obd2Error::Other(Box::new(e)))?;
 
         Ok(())
     }
 
     async fn get_vehicle(&self, vin: &str) -> Result<Option<VehicleProfile>, Obd2Error> {
-        let conn = self.conn.lock().map_err(|e| Obd2Error::Other(Box::new(
-            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-        )))?;
-        let mut stmt = conn.prepare(
-            "SELECT data FROM vehicles WHERE vin = ?1"
-        ).map_err(|e| Obd2Error::Other(Box::new(e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            Obd2Error::Other(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )))
+        })?;
+        let mut stmt = conn
+            .prepare("SELECT data FROM vehicles WHERE vin = ?1")
+            .map_err(|e| Obd2Error::Other(Box::new(e)))?;
 
         let result = stmt.query_row(params![vin], |row| {
             let data: String = row.get(0)?;
@@ -125,8 +138,8 @@ impl VehicleStore for SqliteStore {
 
         match result {
             Ok(data) => {
-                let sp: SerializableProfile = serde_json::from_str(&data)
-                    .map_err(|e| Obd2Error::Other(Box::new(e)))?;
+                let sp: SerializableProfile =
+                    serde_json::from_str(&data).map_err(|e| Obd2Error::Other(Box::new(e)))?;
                 Ok(Some(sp.into()))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -135,27 +148,33 @@ impl VehicleStore for SqliteStore {
     }
 
     async fn save_thresholds(&self, vin: &str, thresholds: &ThresholdSet) -> Result<(), Obd2Error> {
-        let data = serde_json::to_string(thresholds)
-            .map_err(|e| Obd2Error::Other(Box::new(e)))?;
+        let data = serde_json::to_string(thresholds).map_err(|e| Obd2Error::Other(Box::new(e)))?;
 
-        let conn = self.conn.lock().map_err(|e| Obd2Error::Other(Box::new(
-            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-        )))?;
+        let conn = self.conn.lock().map_err(|e| {
+            Obd2Error::Other(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )))
+        })?;
         conn.execute(
             "INSERT OR REPLACE INTO thresholds (vin, data) VALUES (?1, ?2)",
             params![vin, data],
-        ).map_err(|e| Obd2Error::Other(Box::new(e)))?;
+        )
+        .map_err(|e| Obd2Error::Other(Box::new(e)))?;
 
         Ok(())
     }
 
     async fn get_thresholds(&self, vin: &str) -> Result<Option<ThresholdSet>, Obd2Error> {
-        let conn = self.conn.lock().map_err(|e| Obd2Error::Other(Box::new(
-            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-        )))?;
-        let mut stmt = conn.prepare(
-            "SELECT data FROM thresholds WHERE vin = ?1"
-        ).map_err(|e| Obd2Error::Other(Box::new(e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            Obd2Error::Other(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )))
+        })?;
+        let mut stmt = conn
+            .prepare("SELECT data FROM thresholds WHERE vin = ?1")
+            .map_err(|e| Obd2Error::Other(Box::new(e)))?;
 
         let result = stmt.query_row(params![vin], |row| {
             let data: String = row.get(0)?;
@@ -164,8 +183,8 @@ impl VehicleStore for SqliteStore {
 
         match result {
             Ok(data) => {
-                let ts: ThresholdSet = serde_json::from_str(&data)
-                    .map_err(|e| Obd2Error::Other(Box::new(e)))?;
+                let ts: ThresholdSet =
+                    serde_json::from_str(&data).map_err(|e| Obd2Error::Other(Box::new(e)))?;
                 Ok(Some(ts))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -180,13 +199,17 @@ impl SessionStore for SqliteStore {
         let value = reading.value.as_f64().ok();
         let unit = reading.unit;
 
-        let conn = self.conn.lock().map_err(|e| Obd2Error::Other(Box::new(
-            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-        )))?;
+        let conn = self.conn.lock().map_err(|e| {
+            Obd2Error::Other(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )))
+        })?;
         conn.execute(
             "INSERT INTO readings (vin, pid_code, value, unit) VALUES (?1, ?2, ?3, ?4)",
             params![vin, pid.0, value, unit],
-        ).map_err(|e| Obd2Error::Other(Box::new(e)))?;
+        )
+        .map_err(|e| Obd2Error::Other(Box::new(e)))?;
 
         Ok(())
     }
@@ -195,13 +218,17 @@ impl SessionStore for SqliteStore {
         let codes: Vec<&str> = dtcs.iter().map(|d| d.code.as_str()).collect();
         let codes_str = codes.join(",");
 
-        let conn = self.conn.lock().map_err(|e| Obd2Error::Other(Box::new(
-            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-        )))?;
+        let conn = self.conn.lock().map_err(|e| {
+            Obd2Error::Other(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )))
+        })?;
         conn.execute(
             "INSERT INTO dtc_events (vin, dtc_codes) VALUES (?1, ?2)",
             params![vin, codes_str],
-        ).map_err(|e| Obd2Error::Other(Box::new(e)))?;
+        )
+        .map_err(|e| Obd2Error::Other(Box::new(e)))?;
 
         Ok(())
     }
@@ -235,16 +262,17 @@ impl From<&VehicleProfile> for SerializableProfile {
 
 impl From<SerializableProfile> for VehicleProfile {
     fn from(sp: SerializableProfile) -> Self {
-        let decoded_vin = if sp.manufacturer.is_some() || sp.year.is_some() || sp.truck_class.is_some() {
-            Some(obd2_core::vehicle::vin::DecodedVin {
-                year: sp.year,
-                year_alt: None,
-                manufacturer: sp.manufacturer,
-                truck_class: sp.truck_class,
-            })
-        } else {
-            None
-        };
+        let decoded_vin =
+            if sp.manufacturer.is_some() || sp.year.is_some() || sp.truck_class.is_some() {
+                Some(obd2_core::vehicle::vin::DecodedVin {
+                    year: sp.year,
+                    year_alt: None,
+                    manufacturer: sp.manufacturer,
+                    truck_class: sp.truck_class,
+                })
+            } else {
+                None
+            };
         VehicleProfile {
             vin: sp.vin,
             decoded_vin,
@@ -258,7 +286,7 @@ impl From<SerializableProfile> for VehicleProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use obd2_core::protocol::enhanced::{Value, ReadingSource};
+    use obd2_core::protocol::enhanced::{ReadingSource, Value};
     use std::time::Instant;
 
     #[tokio::test]
@@ -303,34 +331,41 @@ mod tests {
             source: ReadingSource::Live,
         };
 
-        store.save_reading("1GCHK23224F000001", Pid::ENGINE_RPM, &reading).await.unwrap();
+        store
+            .save_reading("1GCHK23224F000001", Pid::ENGINE_RPM, &reading)
+            .await
+            .unwrap();
 
         // Verify it was saved
         let conn = store.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM readings WHERE vin = '1GCHK23224F000001'",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM readings WHERE vin = '1GCHK23224F000001'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 1);
     }
 
     #[tokio::test]
     async fn test_save_dtc_event() {
         let store = SqliteStore::in_memory().unwrap();
-        let dtcs = vec![
-            Dtc::from_code("P0420"),
-            Dtc::from_code("P0171"),
-        ];
+        let dtcs = vec![Dtc::from_code("P0420"), Dtc::from_code("P0171")];
 
-        store.save_dtc_event("1GCHK23224F000001", &dtcs).await.unwrap();
+        store
+            .save_dtc_event("1GCHK23224F000001", &dtcs)
+            .await
+            .unwrap();
 
         let conn = store.conn.lock().unwrap();
-        let codes: String = conn.query_row(
-            "SELECT dtc_codes FROM dtc_events WHERE vin = '1GCHK23224F000001'",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let codes: String = conn
+            .query_row(
+                "SELECT dtc_codes FROM dtc_events WHERE vin = '1GCHK23224F000001'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert!(codes.contains("P0420"));
         assert!(codes.contains("P0171"));
     }
@@ -343,7 +378,10 @@ mod tests {
             transmission: vec![],
         };
 
-        store.save_thresholds("TEST_VIN_12345678", &ts).await.unwrap();
+        store
+            .save_thresholds("TEST_VIN_12345678", &ts)
+            .await
+            .unwrap();
         let retrieved = store.get_thresholds("TEST_VIN_12345678").await.unwrap();
         assert!(retrieved.is_some());
     }
@@ -364,11 +402,9 @@ mod tests {
         store.save_vehicle(&profile).await.unwrap();
 
         let conn = store.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vehicles",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vehicles", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(count, 1);
     }
 }

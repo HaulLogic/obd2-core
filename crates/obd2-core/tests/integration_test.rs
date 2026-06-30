@@ -69,7 +69,11 @@ async fn test_spec_matching_duramax() {
     assert_eq!(spec.identity.engine.displacement_l, 6.6);
     // The YAML uses "diesel" (lowercase), serde deserializes as-is
     assert!(
-        spec.identity.engine.fuel_type.to_lowercase().contains("diesel"),
+        spec.identity
+            .engine
+            .fuel_type
+            .to_lowercase()
+            .contains("diesel"),
         "expected diesel fuel type, got: {}",
         spec.identity.engine.fuel_type
     );
@@ -124,12 +128,11 @@ async fn test_diagnostic_rules_fire() {
     let dtcs = vec![Dtc::from_code("P0700")];
     let rules = diagnostics::active_rules(&dtcs, profile.spec.as_ref());
 
+    assert!(!rules.is_empty(), "Duramax spec should have a P0700 rule");
     assert!(
-        !rules.is_empty(),
-        "Duramax spec should have a P0700 rule"
-    );
-    assert!(
-        rules.iter().any(|r| r.name.contains("p0700") || r.name.contains("P0700")),
+        rules
+            .iter()
+            .any(|r| r.name.contains("p0700") || r.name.contains("P0700")),
         "expected a P0700-related rule, got: {:?}",
         rules.iter().map(|r| &r.name).collect::<Vec<_>>()
     );
@@ -155,7 +158,10 @@ async fn test_known_issues_structure() {
     assert!(spec.known_issues.iter().any(|i| i.name.contains("FICM")));
     // Issues should be present in rank order within the spec
     let ranks: Vec<u8> = spec.known_issues.iter().map(|i| i.rank).collect();
-    assert!(ranks.windows(2).all(|w| w[0] <= w[1]), "known issues should be ranked");
+    assert!(
+        ranks.windows(2).all(|w| w[0] <= w[1]),
+        "known issues should be ranked"
+    );
 }
 
 /// Threshold evaluation through spec thresholds
@@ -198,11 +204,8 @@ async fn test_threshold_evaluation() {
 
     // Also test the evaluate_pid_threshold path (may return None due to
     // name mapping mismatch, which is fine -- demonstrates the function works)
-    let _result = threshold::evaluate_pid_threshold(
-        profile.spec.as_ref(),
-        Pid::COOLANT_TEMP,
-        120.0,
-    );
+    let _result =
+        threshold::evaluate_pid_threshold(profile.spec.as_ref(), Pid::COOLANT_TEMP, 120.0);
 }
 
 /// Polling cycle produces events
@@ -372,8 +375,9 @@ async fn test_enhanced_pids_from_spec() {
         "Duramax ECM should have at least 2 enhanced PIDs, got {}",
         ecm_pids.len()
     );
-    assert!(ecm_pids.iter().any(|p| p.name.contains("Fuel Rail")));
     assert!(ecm_pids.iter().any(|p| p.name.contains("Balance Rate")));
+    assert!(ecm_pids.iter().any(|p| p.did == 0x1543));
+    assert!(ecm_pids.iter().any(|p| p.did == 0x1540));
 
     // FICM should have enhanced PIDs
     let ficm_pids = session.module_pids(ModuleId::new("ficm"));
@@ -453,10 +457,7 @@ async fn test_diagnostic_rule_range_trigger() {
     let dtcs = vec![Dtc::from_code("P0265")];
     let rules = diagnostics::active_rules(&dtcs, profile.spec.as_ref());
 
-    assert!(
-        !rules.is_empty(),
-        "should trigger the FICM range rule"
-    );
+    assert!(!rules.is_empty(), "should trigger the FICM range rule");
     assert!(
         rules.iter().any(|r| r.name.contains("ficm")),
         "expected ficm rule, got: {:?}",
@@ -560,7 +561,10 @@ async fn test_identify_vehicle_decoded_vin() {
     let mut session = Session::new(adapter);
     let profile = session.identify_vehicle().await.unwrap();
 
-    let decoded = profile.decoded_vin.as_ref().expect("decoded_vin should be populated");
+    let decoded = profile
+        .decoded_vin
+        .as_ref()
+        .expect("decoded_vin should be populated");
     assert_eq!(decoded.manufacturer.as_deref(), Some("Chevrolet"));
     assert_eq!(decoded.truck_class.as_deref(), Some("diesel-truck"));
     assert!(decoded.year.is_some());
@@ -574,23 +578,31 @@ async fn test_session_evaluate_threshold() {
     let _profile = session.identify_vehicle().await.unwrap();
 
     // Duramax coolant warning is 105°C — 90°C should be normal (None)
-    assert!(session.evaluate_threshold(Pid::COOLANT_TEMP, 90.0).is_none());
+    assert!(session
+        .evaluate_threshold(Pid::COOLANT_TEMP, 90.0)
+        .is_none());
 
     // 110°C should trigger warning
     let result = session.evaluate_threshold(Pid::COOLANT_TEMP, 110.0);
     assert!(result.is_some());
-    assert_eq!(result.unwrap().level, obd2_core::vehicle::AlertLevel::Warning);
+    assert_eq!(
+        result.unwrap().level,
+        obd2_core::vehicle::AlertLevel::Warning
+    );
 
     // 120°C should trigger critical
     let result = session.evaluate_threshold(Pid::COOLANT_TEMP, 120.0);
     assert!(result.is_some());
-    assert_eq!(result.unwrap().level, obd2_core::vehicle::AlertLevel::Critical);
+    assert_eq!(
+        result.unwrap().level,
+        obd2_core::vehicle::AlertLevel::Critical
+    );
 }
 
 /// J1939 PGN read through Session
 #[tokio::test]
 async fn test_j1939_read_eec1() {
-    use obd2_core::protocol::j1939::{Pgn, decode_eec1};
+    use obd2_core::protocol::j1939::{decode_eec1, Pgn};
 
     let adapter = MockAdapter::new();
     let mut session = Session::new(adapter);
@@ -614,7 +626,7 @@ async fn test_j1939_read_dtcs() {
 /// J1939 temperature read through Session
 #[tokio::test]
 async fn test_j1939_read_temperatures() {
-    use obd2_core::protocol::j1939::{Pgn, decode_et1};
+    use obd2_core::protocol::j1939::{decode_et1, Pgn};
 
     let adapter = MockAdapter::new();
     let mut session = Session::new(adapter);
@@ -628,7 +640,7 @@ async fn test_j1939_read_temperatures() {
 /// J1939 fluid pressure read through Session
 #[tokio::test]
 async fn test_j1939_read_pressures() {
-    use obd2_core::protocol::j1939::{Pgn, decode_eflp1};
+    use obd2_core::protocol::j1939::{decode_eflp1, Pgn};
 
     let adapter = MockAdapter::new();
     let mut session = Session::new(adapter);
@@ -642,7 +654,7 @@ async fn test_j1939_read_pressures() {
 /// J1939 fuel economy read through Session
 #[tokio::test]
 async fn test_j1939_read_fuel_economy() {
-    use obd2_core::protocol::j1939::{Pgn, decode_lfe};
+    use obd2_core::protocol::j1939::{decode_lfe, Pgn};
 
     let adapter = MockAdapter::new();
     let mut session = Session::new(adapter);
@@ -655,7 +667,7 @@ async fn test_j1939_read_fuel_economy() {
 /// J1939 vehicle speed read through Session
 #[tokio::test]
 async fn test_j1939_read_vehicle_speed() {
-    use obd2_core::protocol::j1939::{Pgn, decode_ccvs};
+    use obd2_core::protocol::j1939::{decode_ccvs, Pgn};
 
     let adapter = MockAdapter::new();
     let mut session = Session::new(adapter);
@@ -680,7 +692,11 @@ async fn test_read_all_dtcs() {
     // Should be deduplicated
     let codes: Vec<&str> = all.iter().map(|d| d.code.as_str()).collect();
     let unique: std::collections::HashSet<&str> = codes.iter().copied().collect();
-    assert_eq!(codes.len(), unique.len(), "read_all_dtcs should deduplicate");
+    assert_eq!(
+        codes.len(),
+        unique.len(),
+        "read_all_dtcs should deduplicate"
+    );
 }
 
 /// read_vehicle_info returns VIN, CALIDs, CVNs
@@ -717,7 +733,12 @@ async fn test_read_readiness() {
     let result = session.read_readiness().await;
     // MockAdapter may return readiness data or NoData depending on PID 01 support
     assert!(
-        result.is_ok() || matches!(result, Err(obd2_core::error::Obd2Error::NoData | obd2_core::error::Obd2Error::ParseError(_))),
+        result.is_ok()
+            || matches!(
+                result,
+                Err(obd2_core::error::Obd2Error::NoData
+                    | obd2_core::error::Obd2Error::ParseError(_))
+            ),
         "readiness should return data or NoData, got: {:?}",
         result.err()
     );

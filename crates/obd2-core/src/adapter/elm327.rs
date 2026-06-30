@@ -3,21 +3,21 @@
 //! Translates OBD-II service requests into ELM327 AT commands
 //! and hex string format, parses responses back to raw bytes.
 
-use std::collections::HashSet;
-use std::fmt::Write as _;
-use async_trait::async_trait;
-use tracing::debug;
+use super::{
+    Adapter, AdapterEvent, AdapterEventKind, AdapterInfo, Capabilities, Chipset,
+    InitializationReport, PhysicalTarget, ProbeAttempt, ProbeResult, ProtocolSelectionSource,
+    RoutedRequest,
+};
 use crate::error::Obd2Error;
 use crate::protocol::codec::{self, BusFamily};
 use crate::protocol::pid::Pid;
 use crate::protocol::service::{ServiceRequest, Target};
 use crate::transport::Transport;
-use super::{
-    Adapter, AdapterEvent, AdapterEventKind, AdapterInfo, Capabilities, Chipset,
-    InitializationReport, PhysicalTarget, ProbeAttempt, ProbeResult,
-    ProtocolSelectionSource, RoutedRequest,
-};
 use crate::vehicle::{KLineInit, PhysicalAddress, Protocol};
+use async_trait::async_trait;
+use std::collections::HashSet;
+use std::fmt::Write as _;
+use tracing::debug;
 
 /// Default adapter info returned before initialization.
 fn default_adapter_info() -> AdapterInfo {
@@ -66,7 +66,8 @@ impl Elm327Adapter {
     }
 
     async fn send_command_raw(&mut self, cmd: &str) -> Result<String, Obd2Error> {
-        self.transport.annotate_raw_capture(&format!("command={cmd}"));
+        self.transport
+            .annotate_raw_capture(&format!("command={cmd}"));
         let mut framed = String::with_capacity(cmd.len() + 1);
         framed.push_str(cmd);
         framed.push('\r');
@@ -91,7 +92,9 @@ impl Elm327Adapter {
         if null_count > 0 {
             self.push_event(
                 AdapterEventKind::NullBytesFiltered { count: null_count },
-                Some(format!("filtered {null_count} null bytes from adapter response")),
+                Some(format!(
+                    "filtered {null_count} null bytes from adapter response"
+                )),
             );
         }
         String::from_utf8_lossy(&response_bytes).into_owned()
@@ -188,7 +191,10 @@ impl Elm327Adapter {
                 self.send_command_raw("ATSW96").await?;
                 self.send_command_raw("ATWMC133F13E").await?;
             }
-            Protocol::Can11Bit500 | Protocol::Can11Bit250 | Protocol::Can29Bit500 | Protocol::Can29Bit250 => {
+            Protocol::Can11Bit500
+            | Protocol::Can11Bit250
+            | Protocol::Can29Bit500
+            | Protocol::Can29Bit250 => {
                 self.send_command_raw("ATCAF1").await?;
                 self.send_command_raw("ATCFC1").await?;
             }
@@ -199,7 +205,10 @@ impl Elm327Adapter {
 
     fn protocol_family(&self) -> BusFamily {
         match self.info.protocol {
-            Protocol::Can11Bit500 | Protocol::Can11Bit250 | Protocol::Can29Bit500 | Protocol::Can29Bit250 => BusFamily::Can,
+            Protocol::Can11Bit500
+            | Protocol::Can11Bit250
+            | Protocol::Can29Bit500
+            | Protocol::Can29Bit250 => BusFamily::Can,
             Protocol::J1850Pwm | Protocol::J1850Vpw => BusFamily::J1850,
             Protocol::Iso9141(_) => BusFamily::Iso9141,
             Protocol::Kwp2000(_) => BusFamily::Kwp2000,
@@ -214,7 +223,10 @@ impl Elm327Adapter {
         }
         let response = self.send_command(&format!("AT SH {}", header)).await?;
         if !response.contains("OK") {
-            return Err(Obd2Error::Adapter(format!("AT SH failed: {}", response.trim())));
+            return Err(Obd2Error::Adapter(format!(
+                "AT SH failed: {}",
+                response.trim()
+            )));
         }
         self.current_header = Some(header.to_string());
         self.push_event(
@@ -231,7 +243,11 @@ impl Elm327Adapter {
             PhysicalTarget::Broadcast => self.clear_targeting().await,
             PhysicalTarget::Addressed(address) => match address {
                 PhysicalAddress::J1850 { header, .. } => {
-                    self.set_header(&format!("{:02X}{:02X}{:02X}", header[0], header[1], header[2])).await
+                    self.set_header(&format!(
+                        "{:02X}{:02X}{:02X}",
+                        header[0], header[1], header[2]
+                    ))
+                    .await
                 }
                 PhysicalAddress::Can11Bit { request_id, .. } => {
                     self.set_header(&format!("{:03X}", request_id)).await
@@ -291,8 +307,6 @@ impl Elm327Adapter {
         }
 
         let response = self.send_command(&cmd).await?;
-        Self::check_response_error(&response)?;
-
         let skip = match service_id {
             0x01 | 0x02 => 2,
             0x03 | 0x04 | 0x07 | 0x0A => 1,
@@ -301,7 +315,32 @@ impl Elm327Adapter {
             _ => 1,
         };
 
-        codec::decode_elm_response_payload(&response, self.protocol_family(), skip)
+        match codec::decode_elm_response_payload_for_command(
+            &response,
+            self.protocol_family(),
+            skip,
+            Some(&cmd),
+        ) {
+            Ok(mut payload) => {
+                Self::truncate_known_payload(service_id, data, &mut payload);
+                Ok(payload)
+            }
+            Err(decode_err) => {
+                Self::check_response_error(&response)?;
+                Err(decode_err)
+            }
+        }
+    }
+
+    fn truncate_known_payload(service_id: u8, request_data: &[u8], payload: &mut Vec<u8>) {
+        match service_id {
+            0x01 | 0x02 => {
+                if let Some(pid) = request_data.first().copied() {
+                    payload.truncate(Pid(pid).response_bytes() as usize);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Parse hex response string into raw bytes.
@@ -384,21 +423,46 @@ impl Elm327Adapter {
         if trimmed == "?" {
             return Err(Obd2Error::Adapter("unknown command".into()));
         }
-        // Check for negative response (7F xx xx)
-        if trimmed.starts_with("7F") {
-            let parts: Vec<&str> = trimmed.split_whitespace().collect();
-            if parts.len() >= 3 {
-                if let (Ok(service), Ok(nrc_byte)) = (
-                    u8::from_str_radix(parts[1], 16),
-                    u8::from_str_radix(parts[2], 16),
-                ) {
-                    if let Some(nrc) = crate::error::NegativeResponse::from_byte(nrc_byte) {
-                        return Err(Obd2Error::NegativeResponse { service, nrc });
-                    }
+        // Check for negative response (7F xx xx). Some J1850 adapters compact the
+        // bytes into one token and GM Class 2 responses may include echoed DID bytes
+        // before the final NRC, e.g. 7F22162F12.
+        let bytes = Self::compact_response_bytes(trimmed);
+        if bytes.first().copied() == Some(0x7F) && bytes.len() >= 3 {
+            let service = bytes[1];
+            if let Some(nrc_byte) = bytes
+                .iter()
+                .skip(2)
+                .rev()
+                .copied()
+                .find(|byte| crate::error::NegativeResponse::from_byte(*byte).is_some())
+            {
+                if let Some(nrc) = crate::error::NegativeResponse::from_byte(nrc_byte) {
+                    return Err(Obd2Error::NegativeResponse { service, nrc });
                 }
             }
         }
         Ok(())
+    }
+
+    fn compact_response_bytes(response: &str) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut high = None;
+
+        for byte in response.bytes().filter(|byte| byte.is_ascii_hexdigit()) {
+            let nibble = match byte {
+                b'0'..=b'9' => byte - b'0',
+                b'a'..=b'f' => byte - b'a' + 10,
+                b'A'..=b'F' => byte - b'A' + 10,
+                _ => continue,
+            };
+            if let Some(high_nibble) = high.take() {
+                bytes.push((high_nibble << 4) | nibble);
+            } else {
+                high = Some(nibble);
+            }
+        }
+
+        bytes
     }
 
     fn classify_probe_result(response: &str) -> ProbeResult {
@@ -499,19 +563,16 @@ impl Adapter for Elm327Adapter {
         };
 
         // Detect chipset and capabilities
-        let mut info = AdapterInfo::detect(
-            &atz_response,
-            sti_response.as_deref(),
-        );
+        let mut info = AdapterInfo::detect(&atz_response, sti_response.as_deref());
         let mut probe_attempts = Vec::new();
 
         // Step 3-6: Configure
-        self.send_command("ATE0").await?;   // Echo off
-        self.send_command("ATL0").await?;   // Linefeeds off
-        self.send_command("ATH0").await?;   // Headers off (for standard queries)
-        self.send_command("ATS0").await?;   // Spaces off
-        self.send_command("ATAT1").await?;  // Adaptive timing on
-        self.send_command("ATSP0").await?;  // Auto-detect protocol
+        self.send_command("ATE0").await?; // Echo off
+        self.send_command("ATL0").await?; // Linefeeds off
+        self.send_command("ATH0").await?; // Headers off (for standard queries)
+        self.send_command("ATS0").await?; // Spaces off
+        self.send_command("ATAT1").await?; // Adaptive timing on
+        self.send_command("ATSP0").await?; // Auto-detect protocol
         self.push_event(AdapterEventKind::ProtocolSearching, Some("ATSP0".into()));
 
         // Step 7: Query supported PIDs to detect protocol
@@ -553,7 +614,9 @@ impl Adapter for Elm327Adapter {
                 AdapterEventKind::UnsupportedProtocol,
                 Some("no supported protocol could be selected".into()),
             );
-            return Err(Obd2Error::Adapter("unable to determine active protocol".into()));
+            return Err(Obd2Error::Adapter(
+                "unable to determine active protocol".into(),
+            ));
         }
         self.push_event(AdapterEventKind::ProtocolSelected(info.protocol), None);
         self.info = info.clone();
@@ -576,13 +639,15 @@ impl Adapter for Elm327Adapter {
                 )))
             }
             Target::Broadcast => {
-                self.send_routed_command(req.service_id, &req.data, &PhysicalTarget::Broadcast).await
+                self.send_routed_command(req.service_id, &req.data, &PhysicalTarget::Broadcast)
+                    .await
             }
         }
     }
 
     async fn routed_request(&mut self, req: &RoutedRequest) -> Result<Vec<u8>, Obd2Error> {
-        self.send_routed_command(req.service_id, &req.data, &req.target).await
+        self.send_routed_command(req.service_id, &req.data, &req.target)
+            .await
     }
 
     async fn supported_pids(&mut self) -> Result<HashSet<Pid>, Obd2Error> {
@@ -593,15 +658,19 @@ impl Adapter for Elm327Adapter {
             let cmd = format!("01{:02X}", base);
             match self.send_command(&cmd).await {
                 Ok(response) => {
-                    if Self::check_response_error(&response).is_err() {
-                        break; // No more supported PIDs
-                    }
-                    if let Ok(data) = codec::decode_elm_response_payload(&response, self.protocol_family(), 2) {
+                    if let Ok(data) = codec::decode_elm_response_payload_for_command(
+                        &response,
+                        self.protocol_family(),
+                        2,
+                        Some(&cmd),
+                    ) {
                         if data.len() >= 4 {
-                            for pid_code in Self::parse_supported_pids(&data, base) {
+                            for pid_code in Self::parse_supported_pids(&data[..4], base) {
                                 all_supported.insert(Pid(pid_code));
                             }
                         }
+                    } else if Self::check_response_error(&response).is_err() {
+                        break; // No more supported PIDs
                     }
                 }
                 Err(_) => break,
@@ -613,8 +682,7 @@ impl Adapter for Elm327Adapter {
 
     async fn battery_voltage(&mut self) -> Result<Option<f64>, Obd2Error> {
         let response = self.send_command("ATRV").await?;
-        let cleaned = response
-            .replace(['V', 'v', '>', '\r', '\n'], "");
+        let cleaned = response.replace(['V', 'v', '>', '\r', '\n'], "");
         let cleaned = cleaned.trim().to_string();
         match cleaned.parse::<f64>() {
             Ok(v) => Ok(Some(v)),
@@ -677,6 +745,76 @@ mod tests {
         let req = ServiceRequest::read_pid(Pid::ENGINE_RPM);
         let response = adapter.request(&req).await.unwrap();
         assert_eq!(response, vec![0x0A, 0xA0]);
+    }
+
+    #[tokio::test]
+    async fn test_elm327_read_pid_compact_response() {
+        let mut transport = MockTransport::new();
+        setup_init(&mut transport);
+        transport.expect("010C", "410C0A9B\r>");
+
+        let mut adapter = Elm327Adapter::new(Box::new(transport));
+        adapter.initialize().await.unwrap();
+
+        let req = ServiceRequest::read_pid(Pid::ENGINE_RPM);
+        let response = adapter.request(&req).await.unwrap();
+        assert_eq!(response, vec![0x0A, 0x9B]);
+    }
+
+    #[tokio::test]
+    async fn test_elm327_read_pid_compact_response_with_echo() {
+        let mut transport = MockTransport::new();
+        setup_init(&mut transport);
+        transport.expect("010C", "010C\r410C0A9B\r>");
+
+        let mut adapter = Elm327Adapter::new(Box::new(transport));
+        adapter.initialize().await.unwrap();
+
+        let req = ServiceRequest::read_pid(Pid::ENGINE_RPM);
+        let response = adapter.request(&req).await.unwrap();
+        assert_eq!(response, vec![0x0A, 0x9B]);
+    }
+
+    #[tokio::test]
+    async fn test_elm327_read_pid_compact_response_trims_stale_suffix() {
+        let mut transport = MockTransport::new();
+        setup_init(&mut transport);
+        transport.expect("0105", "410577860000\r>");
+
+        let mut adapter = Elm327Adapter::new(Box::new(transport));
+        adapter.initialize().await.unwrap();
+
+        let req = ServiceRequest::read_pid(Pid::COOLANT_TEMP);
+        let response = adapter.request(&req).await.unwrap();
+        assert_eq!(response, vec![0x77]);
+    }
+
+    #[tokio::test]
+    async fn test_elm327_read_pid_uses_positive_payload_before_no_data_noise() {
+        let mut transport = MockTransport::new();
+        setup_init(&mut transport);
+        transport.expect("0105", "41057786\rNO DATA\r>");
+
+        let mut adapter = Elm327Adapter::new(Box::new(transport));
+        adapter.initialize().await.unwrap();
+
+        let req = ServiceRequest::read_pid(Pid::COOLANT_TEMP);
+        let response = adapter.request(&req).await.unwrap();
+        assert_eq!(response, vec![0x77]);
+    }
+
+    #[tokio::test]
+    async fn test_elm327_read_pid_rejects_wrong_pid_response() {
+        let mut transport = MockTransport::new();
+        setup_init(&mut transport);
+        transport.expect("0105", "410C0A9B\r>");
+
+        let mut adapter = Elm327Adapter::new(Box::new(transport));
+        adapter.initialize().await.unwrap();
+
+        let req = ServiceRequest::read_pid(Pid::COOLANT_TEMP);
+        let result = adapter.request(&req).await;
+        assert!(matches!(result, Err(Obd2Error::ParseError(_))));
     }
 
     #[tokio::test]
@@ -755,7 +893,22 @@ mod tests {
     #[tokio::test]
     async fn test_elm327_negative_response() {
         let result = Elm327Adapter::check_response_error("7F 22 31\r>");
-        assert!(matches!(result, Err(Obd2Error::NegativeResponse { service: 0x22, .. })));
+        assert!(matches!(
+            result,
+            Err(Obd2Error::NegativeResponse { service: 0x22, .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_elm327_compact_gm_negative_response() {
+        let result = Elm327Adapter::check_response_error("7F22162F12\r>");
+        assert!(matches!(
+            result,
+            Err(Obd2Error::NegativeResponse {
+                service: 0x22,
+                nrc: crate::error::NegativeResponse::SubFunctionNotSupported,
+            })
+        ));
     }
 
     #[tokio::test]
@@ -768,14 +921,17 @@ mod tests {
         let mut adapter = Elm327Adapter::new(Box::new(transport));
         adapter.initialize().await.unwrap();
 
-        let response = adapter.routed_request(&RoutedRequest {
-            service_id: 0x22,
-            data: vec![0x16, 0x2F],
-            target: PhysicalTarget::Addressed(PhysicalAddress::J1850 {
-                node: 0x10,
-                header: [0x6C, 0x10, 0xF1],
-            }),
-        }).await.unwrap();
+        let response = adapter
+            .routed_request(&RoutedRequest {
+                service_id: 0x22,
+                data: vec![0x16, 0x2F],
+                target: PhysicalTarget::Addressed(PhysicalAddress::J1850 {
+                    node: 0x10,
+                    header: [0x6C, 0x10, 0xF1],
+                }),
+            })
+            .await
+            .unwrap();
 
         assert_eq!(response, vec![0x80, 0x00]);
     }
@@ -791,14 +947,17 @@ mod tests {
         adapter.info.protocol = Protocol::Can11Bit500;
         adapter.initialized = true;
 
-        let response = adapter.routed_request(&RoutedRequest {
-            service_id: 0x22,
-            data: vec![0x12, 0x34],
-            target: PhysicalTarget::Addressed(PhysicalAddress::Can11Bit {
-                request_id: 0x7E0,
-                response_id: 0x7E8,
-            }),
-        }).await.unwrap();
+        let response = adapter
+            .routed_request(&RoutedRequest {
+                service_id: 0x22,
+                data: vec![0x12, 0x34],
+                target: PhysicalTarget::Addressed(PhysicalAddress::Can11Bit {
+                    request_id: 0x7E0,
+                    response_id: 0x7E8,
+                }),
+            })
+            .await
+            .unwrap();
 
         assert_eq!(response, vec![0x12, 0x34]);
     }
@@ -815,16 +974,22 @@ mod tests {
         let mut adapter = Elm327Adapter::new(Box::new(transport));
         adapter.initialize().await.unwrap();
 
-        let _ = adapter.routed_request(&RoutedRequest {
-            service_id: 0x22,
-            data: vec![0x12, 0x34],
-            target: PhysicalTarget::Addressed(PhysicalAddress::Can11Bit {
-                request_id: 0x7E0,
-                response_id: 0x7E8,
-            }),
-        }).await.unwrap();
+        let _ = adapter
+            .routed_request(&RoutedRequest {
+                service_id: 0x22,
+                data: vec![0x12, 0x34],
+                target: PhysicalTarget::Addressed(PhysicalAddress::Can11Bit {
+                    request_id: 0x7E0,
+                    response_id: 0x7E8,
+                }),
+            })
+            .await
+            .unwrap();
 
-        let response = adapter.request(&ServiceRequest::read_pid(Pid::ENGINE_RPM)).await.unwrap();
+        let response = adapter
+            .request(&ServiceRequest::read_pid(Pid::ENGINE_RPM))
+            .await
+            .unwrap();
         assert_eq!(response, vec![0x0A, 0xA0]);
     }
 
@@ -839,23 +1004,29 @@ mod tests {
         let mut adapter = Elm327Adapter::new(Box::new(transport));
         adapter.initialize().await.unwrap();
 
-        let _ = adapter.routed_request(&RoutedRequest {
-            service_id: 0x22,
-            data: vec![0x12, 0x34],
-            target: PhysicalTarget::Addressed(PhysicalAddress::Can11Bit {
-                request_id: 0x7E0,
-                response_id: 0x7E8,
-            }),
-        }).await.unwrap();
+        let _ = adapter
+            .routed_request(&RoutedRequest {
+                service_id: 0x22,
+                data: vec![0x12, 0x34],
+                target: PhysicalTarget::Addressed(PhysicalAddress::Can11Bit {
+                    request_id: 0x7E0,
+                    response_id: 0x7E8,
+                }),
+            })
+            .await
+            .unwrap();
 
-        let response = adapter.routed_request(&RoutedRequest {
-            service_id: 0x22,
-            data: vec![0x12, 0x35],
-            target: PhysicalTarget::Addressed(PhysicalAddress::Can11Bit {
-                request_id: 0x7E0,
-                response_id: 0x7E8,
-            }),
-        }).await.unwrap();
+        let response = adapter
+            .routed_request(&RoutedRequest {
+                service_id: 0x22,
+                data: vec![0x12, 0x35],
+                target: PhysicalTarget::Addressed(PhysicalAddress::Can11Bit {
+                    request_id: 0x7E0,
+                    response_id: 0x7E8,
+                }),
+            })
+            .await
+            .unwrap();
 
         assert_eq!(response, vec![0x56, 0x78]);
     }
@@ -868,14 +1039,16 @@ mod tests {
 
         let mut adapter = Elm327Adapter::new(Box::new(transport));
         adapter.initialize().await.unwrap();
-        let response = adapter.request(&ServiceRequest::read_pid(Pid::ENGINE_RPM)).await.unwrap();
+        let response = adapter
+            .request(&ServiceRequest::read_pid(Pid::ENGINE_RPM))
+            .await
+            .unwrap();
         let events = adapter.drain_events();
 
         assert_eq!(response, vec![0x0A, 0xA0]);
-        assert!(events.iter().any(|event| matches!(
-            event.kind,
-            AdapterEventKind::NullBytesFiltered { count: 1 }
-        )));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event.kind, AdapterEventKind::NullBytesFiltered { count: 1 })));
     }
 
     #[tokio::test]
@@ -886,11 +1059,15 @@ mod tests {
 
         let mut adapter = Elm327Adapter::new(Box::new(transport));
         adapter.initialize().await.unwrap();
-        let result = adapter.request(&ServiceRequest::read_pid(Pid::ENGINE_RPM)).await;
+        let result = adapter
+            .request(&ServiceRequest::read_pid(Pid::ENGINE_RPM))
+            .await;
         let events = adapter.drain_events();
 
         assert!(result.is_err());
-        assert!(events.iter().any(|event| matches!(event.kind, AdapterEventKind::BusBusy)));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event.kind, AdapterEventKind::BusBusy)));
     }
 
     #[tokio::test]
@@ -901,11 +1078,15 @@ mod tests {
 
         let mut adapter = Elm327Adapter::new(Box::new(transport));
         adapter.initialize().await.unwrap();
-        let result = adapter.request(&ServiceRequest::read_pid(Pid::ENGINE_RPM)).await;
+        let result = adapter
+            .request(&ServiceRequest::read_pid(Pid::ENGINE_RPM))
+            .await;
         let events = adapter.drain_events();
 
         assert!(result.is_err());
-        assert!(events.iter().any(|event| matches!(event.kind, AdapterEventKind::Stopped)));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event.kind, AdapterEventKind::Stopped)));
     }
 
     #[tokio::test]
@@ -916,7 +1097,9 @@ mod tests {
 
         let mut adapter = Elm327Adapter::new(Box::new(transport));
         adapter.initialize().await.unwrap();
-        let result = adapter.request(&ServiceRequest::read_pid(Pid::ENGINE_RPM)).await;
+        let result = adapter
+            .request(&ServiceRequest::read_pid(Pid::ENGINE_RPM))
+            .await;
         let events = adapter.drain_events();
 
         assert!(result.is_err());
@@ -942,11 +1125,17 @@ mod tests {
 
         let mut adapter = Elm327Adapter::new(Box::new(transport));
         adapter.initialize().await.unwrap();
-        let result = adapter.request(&ServiceRequest::read_pid(Pid::ENGINE_RPM)).await;
+        let result = adapter
+            .request(&ServiceRequest::read_pid(Pid::ENGINE_RPM))
+            .await;
         let events = adapter.drain_events();
 
         assert!(result.is_err());
-        assert!(events.iter().any(|event| matches!(event.kind, AdapterEventKind::LowVoltageReset)));
-        assert!(events.iter().any(|event| matches!(event.kind, AdapterEventKind::RecoveryAction { .. })));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event.kind, AdapterEventKind::LowVoltageReset)));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event.kind, AdapterEventKind::RecoveryAction { .. })));
     }
 }

@@ -1,6 +1,6 @@
 //! Standard OBD-II PID definitions.
 
-use super::enhanced::{Value, Bitfield};
+use super::enhanced::{Bitfield, Value};
 use crate::error::Obd2Error;
 
 /// The type of value a PID returns.
@@ -146,8 +146,21 @@ impl Pid {
     pub fn unit(&self) -> &'static str {
         match self.0 {
             0x00 | 0x01 | 0x03 | 0x20 | 0x40 | 0x60 => "bitfield",
-            0x04 | 0x06..=0x09 | 0x11 | 0x2C | 0x2D | 0x2E | 0x2F
-            | 0x43 | 0x45 | 0x47 | 0x49 | 0x4A | 0x4C | 0x61 | 0x62 => "%",
+            0x04
+            | 0x06..=0x09
+            | 0x11
+            | 0x2C
+            | 0x2D
+            | 0x2E
+            | 0x2F
+            | 0x43
+            | 0x45
+            | 0x47
+            | 0x49
+            | 0x4A
+            | 0x4C
+            | 0x61
+            | 0x62 => "%",
             0x05 | 0x0F | 0x3C..=0x3F | 0x46 | 0x5C => "\u{00B0}C",
             0x0A | 0x0B | 0x23 | 0x33 | 0x59 => "kPa",
             0x0C => "RPM",
@@ -169,8 +182,19 @@ impl Pid {
     pub fn response_bytes(&self) -> u8 {
         match self.0 {
             0x00 | 0x01 | 0x20 | 0x40 | 0x60 => 4, // bitmaps
-            0x0C | 0x10 | 0x1F | 0x21 | 0x23 | 0x31 | 0x3C..=0x3F
-            | 0x42 | 0x43 | 0x44 | 0x59 | 0x5E | 0x63 => 2,
+            0x0C
+            | 0x10
+            | 0x1F
+            | 0x21
+            | 0x23
+            | 0x31
+            | 0x3C..=0x3F
+            | 0x42
+            | 0x43
+            | 0x44
+            | 0x59
+            | 0x5E
+            | 0x63 => 2,
             _ => 1, // most single-byte PIDs
         }
     }
@@ -187,27 +211,56 @@ impl Pid {
     /// Returns a slice of all known standard PIDs.
     pub fn all() -> &'static [Pid] {
         &[
-            Self::SUPPORTED_PIDS_01_20, Self::MONITOR_STATUS, Self::FUEL_SYSTEM_STATUS,
-            Self::ENGINE_LOAD, Self::COOLANT_TEMP,
-            Self::SHORT_FUEL_TRIM_B1, Self::LONG_FUEL_TRIM_B1,
-            Self::SHORT_FUEL_TRIM_B2, Self::LONG_FUEL_TRIM_B2,
-            Self::FUEL_PRESSURE, Self::INTAKE_MAP, Self::ENGINE_RPM,
-            Self::VEHICLE_SPEED, Self::TIMING_ADVANCE, Self::INTAKE_AIR_TEMP,
-            Self::MAF, Self::THROTTLE_POSITION, Self::OBD_STANDARD, Self::RUN_TIME,
-            Self::SUPPORTED_PIDS_21_40, Self::DISTANCE_WITH_MIL,
-            Self::FUEL_RAIL_GAUGE_PRESSURE, Self::COMMANDED_EGR, Self::EGR_ERROR,
-            Self::COMMANDED_EVAP_PURGE, Self::FUEL_TANK_LEVEL, Self::WARMUPS_SINCE_CLEAR,
-            Self::DISTANCE_SINCE_CLEAR, Self::BAROMETRIC_PRESSURE,
-            Self::CATALYST_TEMP_B1S1, Self::CATALYST_TEMP_B2S1,
-            Self::CATALYST_TEMP_B1S2, Self::CATALYST_TEMP_B2S2,
-            Self::SUPPORTED_PIDS_41_60, Self::CONTROL_MODULE_VOLTAGE,
-            Self::ABSOLUTE_LOAD, Self::COMMANDED_EQUIV_RATIO,
-            Self::RELATIVE_THROTTLE_POS, Self::AMBIENT_AIR_TEMP,
-            Self::ABS_THROTTLE_POS_B, Self::ACCEL_PEDAL_POS_D,
-            Self::ACCEL_PEDAL_POS_E, Self::COMMANDED_THROTTLE_ACTUATOR,
-            Self::FUEL_RAIL_ABS_PRESSURE, Self::ENGINE_OIL_TEMP,
-            Self::ENGINE_FUEL_RATE, Self::SUPPORTED_PIDS_61_80,
-            Self::DEMANDED_TORQUE, Self::ACTUAL_TORQUE, Self::REFERENCE_TORQUE,
+            Self::SUPPORTED_PIDS_01_20,
+            Self::MONITOR_STATUS,
+            Self::FUEL_SYSTEM_STATUS,
+            Self::ENGINE_LOAD,
+            Self::COOLANT_TEMP,
+            Self::SHORT_FUEL_TRIM_B1,
+            Self::LONG_FUEL_TRIM_B1,
+            Self::SHORT_FUEL_TRIM_B2,
+            Self::LONG_FUEL_TRIM_B2,
+            Self::FUEL_PRESSURE,
+            Self::INTAKE_MAP,
+            Self::ENGINE_RPM,
+            Self::VEHICLE_SPEED,
+            Self::TIMING_ADVANCE,
+            Self::INTAKE_AIR_TEMP,
+            Self::MAF,
+            Self::THROTTLE_POSITION,
+            Self::OBD_STANDARD,
+            Self::RUN_TIME,
+            Self::SUPPORTED_PIDS_21_40,
+            Self::DISTANCE_WITH_MIL,
+            Self::FUEL_RAIL_GAUGE_PRESSURE,
+            Self::COMMANDED_EGR,
+            Self::EGR_ERROR,
+            Self::COMMANDED_EVAP_PURGE,
+            Self::FUEL_TANK_LEVEL,
+            Self::WARMUPS_SINCE_CLEAR,
+            Self::DISTANCE_SINCE_CLEAR,
+            Self::BAROMETRIC_PRESSURE,
+            Self::CATALYST_TEMP_B1S1,
+            Self::CATALYST_TEMP_B2S1,
+            Self::CATALYST_TEMP_B1S2,
+            Self::CATALYST_TEMP_B2S2,
+            Self::SUPPORTED_PIDS_41_60,
+            Self::CONTROL_MODULE_VOLTAGE,
+            Self::ABSOLUTE_LOAD,
+            Self::COMMANDED_EQUIV_RATIO,
+            Self::RELATIVE_THROTTLE_POS,
+            Self::AMBIENT_AIR_TEMP,
+            Self::ABS_THROTTLE_POS_B,
+            Self::ACCEL_PEDAL_POS_D,
+            Self::ACCEL_PEDAL_POS_E,
+            Self::COMMANDED_THROTTLE_ACTUATOR,
+            Self::FUEL_RAIL_ABS_PRESSURE,
+            Self::ENGINE_OIL_TEMP,
+            Self::ENGINE_FUEL_RATE,
+            Self::SUPPORTED_PIDS_61_80,
+            Self::DEMANDED_TORQUE,
+            Self::ACTUAL_TORQUE,
+            Self::REFERENCE_TORQUE,
         ]
     }
 
@@ -224,7 +277,10 @@ impl Pid {
         let expected = self.response_bytes() as usize;
         if data.len() < expected {
             return Err(Obd2Error::ParseError(format!(
-                "PID {:#04X} expects {} bytes, got {}", self.0, expected, data.len()
+                "PID {:#04X} expects {} bytes, got {}",
+                self.0,
+                expected,
+                data.len()
             )));
         }
 
@@ -265,14 +321,10 @@ impl Pid {
             }
 
             // Temperature: A - 40
-            0x05 | 0x0F | 0x46 | 0x5C => {
-                Ok(Value::Scalar(a - 40.0))
-            }
+            0x05 | 0x0F | 0x46 | 0x5C => Ok(Value::Scalar(a - 40.0)),
 
             // Fuel trim: (A - 128) * 100 / 128
-            0x06 | 0x07 | 0x08 | 0x09 | 0x2D => {
-                Ok(Value::Scalar((a - 128.0) * 100.0 / 128.0))
-            }
+            0x06 | 0x07 | 0x08 | 0x09 | 0x2D => Ok(Value::Scalar((a - 128.0) * 100.0 / 128.0)),
 
             // Fuel pressure: A * 3
             0x0A => Ok(Value::Scalar(a * 3.0)),
@@ -305,9 +357,7 @@ impl Pid {
             0x30 => Ok(Value::Scalar(a)),
 
             // Catalyst temps: (256*A + B) / 10 - 40
-            0x3C..=0x3F => {
-                Ok(Value::Scalar((256.0 * a + b) / 10.0 - 40.0))
-            }
+            0x3C..=0x3F => Ok(Value::Scalar((256.0 * a + b) / 10.0 - 40.0)),
 
             // Control module voltage: (256*A + B) / 1000
             0x42 => Ok(Value::Scalar((256.0 * a + b) / 1000.0)),
@@ -330,7 +380,10 @@ impl Pid {
             // Reference torque: 256*A + B (Nm)
             0x63 => Ok(Value::Scalar(256.0 * a + b)),
 
-            _ => Err(Obd2Error::ParseError(format!("no parse formula for PID {:#04X}", self.0))),
+            _ => Err(Obd2Error::ParseError(format!(
+                "no parse formula for PID {:#04X}",
+                self.0
+            ))),
         }
     }
 }

@@ -1,9 +1,9 @@
 //! PID polling loop with PollEvent channel and threshold alerting.
 
-use std::time::Duration;
-use tokio::sync::mpsc;
 use crate::protocol::pid::Pid;
 use crate::vehicle::{ModuleId, ThresholdResult};
+use std::time::Duration;
+use tokio::sync::mpsc;
 
 /// Events emitted by the polling loop.
 #[derive(Debug, Clone)]
@@ -32,10 +32,7 @@ pub enum PollEvent {
     },
 
     /// Polling encountered a non-fatal error (polling continues).
-    Error {
-        pid: Option<Pid>,
-        error: String,
-    },
+    Error { pid: Option<Pid>, error: String },
 
     /// Battery voltage update.
     Voltage(f64),
@@ -110,9 +107,7 @@ impl PollHandle {
 /// BR-6.1: Cancellable via PollHandle::stop()
 /// BR-6.4: Single PID failure emits PollEvent::Error, doesn't stop the loop
 /// BR-6.5: Task is tracked via PollHandle
-pub fn start_poll_loop(
-    config: PollConfig,
-) -> (PollHandle, mpsc::Receiver<PollEvent>, PollConfig) {
+pub fn start_poll_loop(config: PollConfig) -> (PollHandle, mpsc::Receiver<PollEvent>, PollConfig) {
     let (event_tx, event_rx) = mpsc::channel(256);
     let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
     let (interval_tx, interval_rx) = tokio::sync::watch::channel(config.interval);
@@ -143,14 +138,13 @@ pub async fn execute_poll_cycle<A: crate::adapter::Adapter>(
         match session.read_pid(pid).await {
             Ok(reading) => {
                 let value = reading.value.clone();
-                let _ = event_tx.send(PollEvent::Reading {
-                    pid,
-                    reading,
-                }).await;
+                let _ = event_tx.send(PollEvent::Reading { pid, reading }).await;
 
                 if let crate::protocol::enhanced::Value::Scalar(v) = &value {
                     if let Some(result) = spec_override
-                        .and_then(|spec| super::threshold::evaluate_pid_threshold(Some(spec), pid, *v))
+                        .and_then(|spec| {
+                            super::threshold::evaluate_pid_threshold(Some(spec), pid, *v)
+                        })
                         .or_else(|| session.evaluate_threshold(pid, *v))
                     {
                         let _ = event_tx.send(PollEvent::Alert(result)).await;
@@ -161,10 +155,12 @@ pub async fn execute_poll_cycle<A: crate::adapter::Adapter>(
                 // Skip -- PID not supported (BR-6.4)
             }
             Err(e) => {
-                let _ = event_tx.send(PollEvent::Error {
-                    pid: Some(pid),
-                    error: e.to_string(),
-                }).await;
+                let _ = event_tx
+                    .send(PollEvent::Error {
+                        pid: Some(pid),
+                        error: e.to_string(),
+                    })
+                    .await;
             }
         }
     }
@@ -202,9 +198,7 @@ mod tests {
 
     #[test]
     fn test_poll_handle_stop() {
-        let (handle, _rx, _config) = start_poll_loop(
-            PollConfig::new(vec![Pid::ENGINE_RPM]),
-        );
+        let (handle, _rx, _config) = start_poll_loop(PollConfig::new(vec![Pid::ENGINE_RPM]));
         assert!(handle.is_running());
         handle.stop();
         assert!(!handle.is_running());
@@ -236,8 +230,8 @@ mod tests {
     #[tokio::test]
     async fn test_poll_cycle_with_threshold() {
         use crate::vehicle::{
-            VehicleSpec, SpecIdentity, EngineSpec, CommunicationSpec,
-            ThresholdSet, NamedThreshold, Threshold,
+            CommunicationSpec, EngineSpec, NamedThreshold, SpecIdentity, Threshold, ThresholdSet,
+            VehicleSpec,
         };
 
         let spec = VehicleSpec {
@@ -310,6 +304,9 @@ mod tests {
                 got_alert = true;
             }
         }
-        assert!(!got_alert, "50 deg C should not trigger alert (warning at 60)");
+        assert!(
+            !got_alert,
+            "50 deg C should not trigger alert (warning at 60)"
+        );
     }
 }

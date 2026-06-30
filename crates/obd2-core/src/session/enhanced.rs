@@ -54,6 +54,15 @@ fn find_enhanced_pid<'a>(
         .find(|epid| epid.did == did && epid.module.eq_ignore_ascii_case(&module.0))
 }
 
+/// Public version of find_enhanced_pid for use by Session.
+pub fn find_enhanced_pid_from_spec<'a>(
+    spec: Option<&'a VehicleSpec>,
+    did: u16,
+    module: &ModuleId,
+) -> Option<&'a EnhancedPid> {
+    find_enhanced_pid(spec, did, module)
+}
+
 /// Decode raw bytes using the formula from an EnhancedPid definition.
 fn decode_with_formula(epid: &EnhancedPid, data: &[u8]) -> Value {
     use crate::protocol::enhanced::Formula;
@@ -67,12 +76,8 @@ fn decode_with_formula(epid: &EnhancedPid, data: &[u8]) -> Value {
 
     match &epid.formula {
         Formula::Linear { scale, offset } => Value::Scalar(a * scale + offset),
-        Formula::TwoByte { scale, offset } => {
-            Value::Scalar((a * 256.0 + b) * scale + offset)
-        }
-        Formula::Centered { center, divisor } => {
-            Value::Scalar((a * 256.0 + b - center) / divisor)
-        }
+        Formula::TwoByte { scale, offset } => Value::Scalar((a * 256.0 + b) * scale + offset),
+        Formula::Centered { center, divisor } => Value::Scalar((a * 256.0 + b - center) / divisor),
         Formula::Bitmask { bits } => {
             let raw = if data.len() >= 4 {
                 u32::from_be_bytes([data[0], data[1], data[2], data[3]])
@@ -248,7 +253,10 @@ mod tests {
                     did: 0x1170,
                     name: "Fuel Rail Pressure".into(),
                     unit: "kPa".into(),
-                    formula: Formula::TwoByte { scale: 10.0, offset: 0.0 },
+                    formula: Formula::TwoByte {
+                        scale: 10.0,
+                        offset: 0.0,
+                    },
                     bytes: 2,
                     module: "ecm".into(),
                     value_type: crate::protocol::pid::ValueType::Scalar,
@@ -260,7 +268,10 @@ mod tests {
                     did: 0x0544,
                     name: "FICM Voltage".into(),
                     unit: "V".into(),
-                    formula: Formula::TwoByte { scale: 0.0039, offset: 0.0 },
+                    formula: Formula::TwoByte {
+                        scale: 0.0039,
+                        offset: 0.0,
+                    },
                     bytes: 2,
                     module: "ficm".into(),
                     value_type: crate::protocol::pid::ValueType::Scalar,
@@ -272,7 +283,10 @@ mod tests {
                     did: 0x162F,
                     name: "Balance Rate".into(),
                     unit: "mm3".into(),
-                    formula: Formula::Centered { center: 32768.0, divisor: 64.0 },
+                    formula: Formula::Centered {
+                        center: 32768.0,
+                        divisor: 64.0,
+                    },
                     bytes: 2,
                     module: "ecm".into(),
                     value_type: crate::protocol::pid::ValueType::Scalar,
@@ -353,6 +367,18 @@ mod tests {
     }
 
     #[test]
+    fn test_find_enhanced_pid_exposes_command_suffix() {
+        let mut spec = make_test_spec_with_enhanced_pids();
+        spec.enhanced_pids[2].command_suffix = Some(vec![0x01]);
+        let ecm = ModuleId::new("ecm");
+
+        let pid = find_enhanced_pid_from_spec(Some(&spec), 0x162F, &ecm)
+            .expect("balance rate PID should exist");
+
+        assert_eq!(pid.command_suffix.as_deref(), Some(&[0x01][..]));
+    }
+
+    #[test]
     fn test_decode_enhanced_value_uses_formula() {
         let spec = make_test_spec_with_enhanced_pids();
         let module = ModuleId::new("ecm");
@@ -360,5 +386,4 @@ mod tests {
         assert!(matches!(value, Value::Scalar(_)));
         assert!((value.as_f64().unwrap()).abs() < 0.01);
     }
-
 }

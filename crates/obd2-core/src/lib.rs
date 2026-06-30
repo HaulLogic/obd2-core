@@ -12,11 +12,11 @@
 //! may exist in the crate, but they remain a separate workstream and should not be
 //! treated as complete `1.0` integration guidance yet.
 
+pub mod adapter;
 pub mod error;
 pub mod protocol;
-pub mod transport;
-pub mod adapter;
-pub mod vehicle;
 pub mod session;
-pub mod store;
 pub mod specs;
+pub mod store;
+pub mod transport;
+pub mod vehicle;

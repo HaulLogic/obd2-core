@@ -39,14 +39,10 @@ pub async fn decode_vin(vin: &str) -> Result<Option<NhtsaVehicle>, Obd2Error> {
         .build()
         .map_err(|e| Obd2Error::Transport(format!("HTTP client error: {}", e)))?;
 
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::warn!(target: "obd2::nhtsa", "NHTSA request failed for {}: {}", vin, e);
-            Obd2Error::Transport(format!("NHTSA request failed: {}", e))
-        })?;
+    let response = client.get(&url).send().await.map_err(|e| {
+        tracing::warn!(target: "obd2::nhtsa", "NHTSA request failed for {}: {}", vin, e);
+        Obd2Error::Transport(format!("NHTSA request failed: {}", e))
+    })?;
 
     if !response.status().is_success() {
         tracing::warn!(target: "obd2::nhtsa", "NHTSA returned status {} for VIN {}", response.status(), vin);
@@ -157,7 +153,8 @@ mod tests {
 
     #[test]
     fn test_parse_empty_response() {
-        let json = r#"{"Results": [{"VariableId": 26, "Value": ""}, {"VariableId": 28, "Value": null}]}"#;
+        let json =
+            r#"{"Results": [{"VariableId": 26, "Value": ""}, {"VariableId": 28, "Value": null}]}"#;
         let result = parse_nhtsa_response(json).unwrap();
         assert!(result.is_none()); // No useful data
     }

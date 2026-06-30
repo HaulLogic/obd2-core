@@ -1,9 +1,9 @@
 //! Mock transport for testing.
 
+use super::Transport;
+use crate::error::Obd2Error;
 use async_trait::async_trait;
 use std::collections::VecDeque;
-use crate::error::Obd2Error;
-use super::Transport;
 
 /// A mock transport that returns pre-configured responses.
 ///
@@ -27,12 +27,15 @@ impl MockTransport {
     /// Add an expected command/response pair.
     /// When write() receives data matching `command`, the `response` is queued.
     pub fn expect(&mut self, command: &str, response: &str) {
-        self.expectations.push((command.to_string(), response.to_string()));
+        self.expectations
+            .push((command.to_string(), response.to_string()));
     }
 }
 
 impl Default for MockTransport {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
@@ -65,7 +68,9 @@ impl Transport for MockTransport {
         Ok(())
     }
 
-    fn name(&self) -> &str { "mock" }
+    fn name(&self) -> &str {
+        "mock"
+    }
 }
 
 #[cfg(test)]

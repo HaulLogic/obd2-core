@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use crate::error::Obd2Error;
 use super::VehicleSpec;
+use crate::error::Obd2Error;
 
 /// Parse a VehicleSpec from a YAML string.
 pub fn load_spec_from_str(yaml: &str) -> Result<VehicleSpec, Obd2Error> {

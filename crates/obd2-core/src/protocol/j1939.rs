@@ -225,7 +225,13 @@ impl J1939Dtc {
 
 impl std::fmt::Display for J1939Dtc {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SPN {} FMI {} ({})", self.spn, self.fmi, self.fmi_description())
+        write!(
+            f,
+            "SPN {} FMI {} ({})",
+            self.spn,
+            self.fmi,
+            self.fmi_description()
+        )
     }
 }
 
@@ -237,12 +243,20 @@ const NA_WORD: u16 = 0xFFFF;
 
 /// Convert a single-byte J1939 value, returning `None` if the byte is `0xFF` (not available).
 fn byte_available(b: u8) -> Option<u8> {
-    if b == NA_BYTE { None } else { Some(b) }
+    if b == NA_BYTE {
+        None
+    } else {
+        Some(b)
+    }
 }
 
 /// Convert a two-byte J1939 value, returning `None` if the word is `0xFFFF` (not available).
 fn word_available(w: u16) -> Option<u16> {
-    if w == NA_WORD { None } else { Some(w) }
+    if w == NA_WORD {
+        None
+    } else {
+        Some(w)
+    }
 }
 
 /// Decode EEC1 (PGN 61444) from 8 raw bytes.
@@ -286,11 +300,19 @@ pub fn decode_ccvs(data: &[u8]) -> Option<Ccvs> {
 
     // SPN 597: Brake Switch (byte 4, bits 2-3) — 0b11 = not available
     let brake_bits = (data[3] >> 2) & 0x03;
-    let brake_switch = if brake_bits == 0x03 { None } else { Some(brake_bits == 1) };
+    let brake_switch = if brake_bits == 0x03 {
+        None
+    } else {
+        Some(brake_bits == 1)
+    };
 
     // SPN 595: Cruise Control Active (byte 1, bits 0-1) — 0b11 = not available
     let cruise_bits = data[0] & 0x03;
-    let cruise_active = if cruise_bits == 0x03 { None } else { Some(cruise_bits == 1) };
+    let cruise_active = if cruise_bits == 0x03 {
+        None
+    } else {
+        Some(cruise_bits == 1)
+    };
 
     Some(Ccvs {
         vehicle_speed,
@@ -530,9 +552,19 @@ mod tests {
 
     #[test]
     fn test_j1939_dtc_fmi_descriptions() {
-        let dtc = J1939Dtc { spn: 0, fmi: 0, occurrence_count: 0, conversion_method: 0 };
+        let dtc = J1939Dtc {
+            spn: 0,
+            fmi: 0,
+            occurrence_count: 0,
+            conversion_method: 0,
+        };
         assert!(dtc.fmi_description().contains("Above Normal"));
-        let dtc = J1939Dtc { spn: 0, fmi: 11, occurrence_count: 0, conversion_method: 0 };
+        let dtc = J1939Dtc {
+            spn: 0,
+            fmi: 11,
+            occurrence_count: 0,
+            conversion_method: 0,
+        };
         assert!(dtc.fmi_description().contains("Root Cause Not Known"));
     }
 

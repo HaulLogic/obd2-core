@@ -1,27 +1,26 @@
 //! OBD-II and J1939 protocol types and parsing.
 
-pub mod pid;
+pub mod codec;
 pub mod dtc;
 pub mod enhanced;
-pub mod service;
-pub mod codec;
 pub mod j1939;
+pub mod pid;
+pub mod service;
 
 // Re-export key types
-pub use pid::{Pid, ValueType};
-pub use dtc::{Dtc, DtcCategory, DtcStatus, DtcStatusByte, Severity};
-pub use enhanced::{EnhancedPid, Formula, Confidence};
-pub use service::{
-    DiagSession, ActuatorCommand, ReadinessStatus, MonitorStatus,
-    TestResult, VehicleInfo, ServiceRequest, O2TestResult, O2SensorLocation,
-};
 pub use codec::{
-    BusFamily, CanFrame, CanFrameKind, DecodedFrame, IsoKLineFrame, J1850Frame,
-    decode_can_headers_off, decode_can_headers_on, decode_frame,
-    decode_iso_kline_headers_on, decode_j1850_headers_on,
+    decode_can_headers_off, decode_can_headers_on, decode_frame, decode_iso_kline_headers_on,
+    decode_j1850_headers_on, BusFamily, CanFrame, CanFrameKind, DecodedFrame, IsoKLineFrame,
+    J1850Frame,
 };
+pub use dtc::{Dtc, DtcCategory, DtcStatus, DtcStatusByte, Severity};
+pub use enhanced::{Confidence, EnhancedPid, Formula};
 pub use j1939::{
-    Pgn, J1939Dtc,
-    Eec1, Ccvs, Et1, Eflp1, Lfe,
-    decode_eec1, decode_ccvs, decode_et1, decode_eflp1, decode_lfe, decode_dm1,
+    decode_ccvs, decode_dm1, decode_eec1, decode_eflp1, decode_et1, decode_lfe, Ccvs, Eec1, Eflp1,
+    Et1, J1939Dtc, Lfe, Pgn,
+};
+pub use pid::{Pid, ValueType};
+pub use service::{
+    ActuatorCommand, DiagSession, MonitorStatus, O2SensorLocation, O2TestResult, ReadinessStatus,
+    ServiceRequest, TestResult, VehicleInfo,
 };

@@ -13,8 +13,8 @@
 //! Consumers do NOT need their own DTC description tables. Call `enrich_dtcs()`
 //! after reading DTCs to get the most specific descriptions available.
 
-use crate::protocol::dtc::{Dtc, universal_dtc_description};
-use crate::vehicle::{VehicleSpec, DiagnosticRule, RuleTrigger, KnownIssue};
+use crate::protocol::dtc::{universal_dtc_description, Dtc};
+use crate::vehicle::{DiagnosticRule, KnownIssue, RuleTrigger, VehicleSpec};
 
 /// Enrich a list of DTCs with descriptions, severity, and notes from the spec.
 ///
@@ -48,32 +48,25 @@ pub fn enrich_dtcs(dtcs: &mut [Dtc], spec: Option<&VehicleSpec>) {
 /// Rules fire based on triggers (BR-4.2):
 /// - DtcPresent: fires when a specific DTC code is in the list
 /// - DtcRange: fires when any DTC in the range is present
-pub fn active_rules<'a>(
-    dtcs: &[Dtc],
-    spec: Option<&'a VehicleSpec>,
-) -> Vec<&'a DiagnosticRule> {
+pub fn active_rules<'a>(dtcs: &[Dtc], spec: Option<&'a VehicleSpec>) -> Vec<&'a DiagnosticRule> {
     let spec = match spec {
         Some(s) => s,
         None => return vec![],
     };
 
-    spec.diagnostic_rules.iter().filter(|rule| {
-        match &rule.trigger {
-            RuleTrigger::DtcPresent(code) => {
-                dtcs.iter().any(|d| d.code == *code)
-            }
+    spec.diagnostic_rules
+        .iter()
+        .filter(|rule| match &rule.trigger {
+            RuleTrigger::DtcPresent(code) => dtcs.iter().any(|d| d.code == *code),
             RuleTrigger::DtcRange(start, end) => {
                 dtcs.iter().any(|d| d.code >= *start && d.code <= *end)
             }
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 /// Find known issues that match current DTCs by symptom codes.
-pub fn matching_issues<'a>(
-    dtcs: &[Dtc],
-    spec: Option<&'a VehicleSpec>,
-) -> Vec<&'a KnownIssue> {
+pub fn matching_issues<'a>(dtcs: &[Dtc], spec: Option<&'a VehicleSpec>) -> Vec<&'a KnownIssue> {
     let spec = match spec {
         Some(s) => s,
         None => return vec![],
@@ -81,19 +74,26 @@ pub fn matching_issues<'a>(
 
     let dtc_codes: Vec<&str> = dtcs.iter().map(|d| d.code.as_str()).collect();
 
-    let mut matches: Vec<&KnownIssue> = spec.known_issues.iter().filter(|issue| {
-        issue.symptoms.iter().any(|symptom| dtc_codes.contains(&symptom.as_str()))
-    }).collect();
+    let mut matches: Vec<&KnownIssue> = spec
+        .known_issues
+        .iter()
+        .filter(|issue| {
+            issue
+                .symptoms
+                .iter()
+                .any(|symptom| dtc_codes.contains(&symptom.as_str()))
+        })
+        .collect();
 
     // Sort by rank (lowest = most common = first)
     matches.sort_by_key(|i| i.rank);
     matches
 }
 
-/// Deduplicate DTCs by code, keeping the most informative version.
+/// Deduplicate DTCs by code, source module, and lifecycle status.
 pub fn dedup_dtcs(dtcs: &mut Vec<Dtc>) {
     let mut seen = std::collections::HashSet::new();
-    dtcs.retain(|dtc| seen.insert(dtc.code.clone()));
+    dtcs.retain(|dtc| seen.insert((dtc.code.clone(), dtc.source_module.clone(), dtc.status)));
 }
 
 #[cfg(test)]
@@ -212,7 +212,10 @@ mod tests {
         let spec = make_spec_with_dtcs();
         let mut dtcs = vec![Dtc::from_code("P0087")];
         enrich_dtcs(&mut dtcs, Some(&spec));
-        assert_eq!(dtcs[0].description.as_deref(), Some("Fuel Rail Pressure Too Low"));
+        assert_eq!(
+            dtcs[0].description.as_deref(),
+            Some("Fuel Rail Pressure Too Low")
+        );
         assert_eq!(dtcs[0].severity, Some(Severity::Critical));
         assert!(dtcs[0].notes.is_some());
     }
@@ -302,6 +305,19 @@ mod tests {
             Dtc::from_code("P0420"), // duplicate
         ];
         dedup_dtcs(&mut dtcs);
+        assert_eq!(dtcs.len(), 2);
+    }
+
+    #[test]
+    fn test_dedup_dtcs_keeps_distinct_modules() {
+        let mut ecm = Dtc::from_code("P0700");
+        ecm.source_module = Some("ecm".into());
+        let mut tcm = Dtc::from_code("P0700");
+        tcm.source_module = Some("tcm".into());
+        let mut dtcs = vec![ecm, tcm];
+
+        dedup_dtcs(&mut dtcs);
+
         assert_eq!(dtcs.len(), 2);
     }
 }

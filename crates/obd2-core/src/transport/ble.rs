@@ -4,15 +4,15 @@
 //! Supports STN-based adapters (OBDLink MX+, etc.) and Nordic UART Service.
 
 use async_trait::async_trait;
-use btleplug::api::{CharPropFlags, Central, Manager as _, Peripheral as _, WriteType};
+use btleplug::api::{Central, CharPropFlags, Manager as _, Peripheral as _, WriteType};
 use btleplug::platform::{Manager, Peripheral};
 use futures::StreamExt;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use super::Transport;
 use super::ChunkObserver;
+use super::Transport;
 use crate::error::Obd2Error;
 
 // ── GATT UUIDs ──────────────────────────────────────────────────────────────
@@ -34,7 +34,9 @@ const NUS_RX_CHAR: Uuid = Uuid::from_u128(0x6E40_0002_B5A3_F393_E0A9_E50E_24DC_C
 /// Used by [`is_adapter_match`] and [`BleTransport::scan_and_connect`] to identify
 /// OBD-II adapters during BLE scanning. Consumers building custom scanner UIs can
 /// use this list directly for device filtering.
-pub const ADAPTER_NAME_PATTERNS: &[&str] = &["OBDLink", "OBD", "ELM327", "STN", "OBDII", "Vgate", "vLink", "Veepeak"];
+pub const ADAPTER_NAME_PATTERNS: &[&str] = &[
+    "OBDLink", "OBD", "ELM327", "STN", "OBDII", "Vgate", "vLink", "Veepeak",
+];
 
 /// Read timeout for BLE responses.
 const BLE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -264,10 +266,7 @@ impl BleTransport {
                             let name = props.local_name.unwrap_or_default();
                             if !name.is_empty() {
                                 info!(device = %name, "BLE device found");
-                                if is_adapter_match(
-                                    &name,
-                                    name_filter_owned.as_deref(),
-                                ) {
+                                if is_adapter_match(&name, name_filter_owned.as_deref()) {
                                     central_clone.stop_scan().await.ok();
                                     return Ok(peripheral);
                                 }
@@ -351,9 +350,7 @@ impl Transport for BleTransport {
                     }
                 }
                 Ok(None) => {
-                    return Err(Obd2Error::Transport(
-                        "BLE notification stream ended".into(),
-                    ));
+                    return Err(Obd2Error::Transport("BLE notification stream ended".into()));
                 }
                 Err(_) => {
                     if result.is_empty() {

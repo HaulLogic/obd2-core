@@ -1,7 +1,7 @@
 //! Enhanced manufacturer-specific PID types.
 
-use std::time::Instant;
 use crate::error::Obd2Error;
+use std::time::Instant;
 
 /// Confidence level of diagnostic data from a vehicle spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
@@ -102,13 +102,19 @@ mod tests {
 
     #[test]
     fn test_value_as_f64_error_on_bitfield() {
-        let v = Value::Bitfield(Bitfield { raw: 0xFF, flags: vec![] });
+        let v = Value::Bitfield(Bitfield {
+            raw: 0xFF,
+            flags: vec![],
+        });
         assert!(v.as_f64().is_err());
     }
 
     #[test]
     fn test_value_as_bitfield() {
-        let bf = Bitfield { raw: 0xAB, flags: vec![("test".into(), true)] };
+        let bf = Bitfield {
+            raw: 0xAB,
+            flags: vec![("test".into(), true)],
+        };
         let v = Value::Bitfield(bf);
         let result = v.as_bitfield().unwrap();
         assert_eq!(result.raw, 0xAB);

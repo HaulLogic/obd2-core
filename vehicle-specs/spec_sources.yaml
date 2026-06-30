@@ -421,6 +421,21 @@ aftermarket_tools:
     confidence: community
     applies_to: "gm_duramax"
 
+  - id: SCANGAUGE-XGAUGE-LB7-LLY
+    name: "ScanGauge X-Gauge — LB7/LLY Duramax Commands"
+    scope: "Published X-Gauge TXD/RXF/RXD/MTH commands for LB7 and LLY Duramax"
+    covers:
+      - "Desired and actual VGT vane position"
+      - "Injector balance rate and injector pulse width"
+      - "Actual and desired fuel pressure"
+    urls:
+      desired_vane: "https://www.scangauge.com/xgauge/lb7-lly-duramax-desired-vane-position/"
+      actual_vane: "https://www.scangauge.com/xgauge/lb7-lly-duramax-actual-vane-position/"
+      balance_rate_1: "https://www.scangauge.com/xgauge/lb7-lly-duramax-balance-rate-1/"
+    note: "Commands include the J1850 Class 2 header and a trailing selector byte."
+    confidence: community
+    applies_to: "gm_duramax_lly"
+
   - id: EFILIVE
     name: "EFI Live — Diagnostic & Tuning Software"
     scope: "Professional tuning software with comprehensive PID databases for GM diesel platforms"

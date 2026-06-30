@@ -122,8 +122,12 @@ pub fn o2_test_info(tid: u8) -> (&'static str, &'static str, fn(u16) -> f64) {
     match tid {
         0x01 => ("Rich-to-Lean Threshold Voltage", "V", |v| v as f64 * 0.005),
         0x02 => ("Lean-to-Rich Threshold Voltage", "V", |v| v as f64 * 0.005),
-        0x03 => ("Low Sensor Voltage for Switch Time", "V", |v| v as f64 * 0.005),
-        0x04 => ("High Sensor Voltage for Switch Time", "V", |v| v as f64 * 0.005),
+        0x03 => ("Low Sensor Voltage for Switch Time", "V", |v| {
+            v as f64 * 0.005
+        }),
+        0x04 => ("High Sensor Voltage for Switch Time", "V", |v| {
+            v as f64 * 0.005
+        }),
         0x05 => ("Rich-to-Lean Switch Time", "s", |v| v as f64 * 0.004),
         0x06 => ("Lean-to-Rich Switch Time", "s", |v| v as f64 * 0.004),
         0x07 => ("Minimum Sensor Voltage", "V", |v| v as f64 * 0.005),
@@ -231,7 +235,11 @@ mod tests {
     fn test_o2_test_info_all_standard_tids() {
         for tid in 0x01..=0x09u8 {
             let (name, unit, _) = o2_test_info(tid);
-            assert!(!name.contains("Unknown"), "TID {:#04X} should be known", tid);
+            assert!(
+                !name.contains("Unknown"),
+                "TID {:#04X} should be known",
+                tid
+            );
             assert!(!unit.is_empty(), "TID {:#04X} should have a unit", tid);
         }
     }

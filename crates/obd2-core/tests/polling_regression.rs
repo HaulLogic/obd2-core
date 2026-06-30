@@ -31,12 +31,8 @@ fn budget_for(iterations: usize) -> Duration {
 #[tokio::test]
 async fn repeated_pid_polling_harness() {
     let iterations = iterations();
-    let config = PollConfig::new(vec![
-        Pid::ENGINE_RPM,
-        Pid::COOLANT_TEMP,
-        Pid::VEHICLE_SPEED,
-    ])
-    .with_voltage(false);
+    let config = PollConfig::new(vec![Pid::ENGINE_RPM, Pid::COOLANT_TEMP, Pid::VEHICLE_SPEED])
+        .with_voltage(false);
 
     let expected_readings = iterations * config.pids.len();
     let (tx, mut rx) = mpsc::channel::<PollEvent>(expected_readings + 16);
@@ -77,17 +73,23 @@ async fn repeated_pid_polling_harness() {
         "expected {} readings across {} cycles, got {}",
         expected_readings, iterations, reading_count
     );
-    assert_eq!(alert_count, 0, "mock-backed repeated polling should not alert");
-    assert_eq!(voltage_count, 0, "voltage reads are disabled for this harness");
-    assert_eq!(error_count, 0, "mock-backed repeated polling should not error");
+    assert_eq!(
+        alert_count, 0,
+        "mock-backed repeated polling should not alert"
+    );
+    assert_eq!(
+        voltage_count, 0,
+        "voltage reads are disabled for this harness"
+    );
+    assert_eq!(
+        error_count, 0,
+        "mock-backed repeated polling should not error"
+    );
 
     let budget = budget_for(iterations);
     eprintln!(
         "polling harness: {} cycles, {} readings, {:?} elapsed, budget {:?}",
-        iterations,
-        reading_count,
-        elapsed,
-        budget
+        iterations, reading_count, elapsed, budget
     );
 
     assert!(

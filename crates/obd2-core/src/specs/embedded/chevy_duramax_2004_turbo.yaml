@@ -54,6 +54,37 @@ communication:
     - id: j1850vpw
       protocol: J1850Vpw
       speed_bps: 10400
+      modules:
+        - id: ecm
+          name: "Engine Control Module"
+          address: !J1850
+            node: 0x10
+            header: [0x6C, 0x10, 0xF1]
+          bus: j1850vpw
+        - id: tcm
+          name: "Transmission Control Module"
+          address: !J1850
+            node: 0x18
+            header: [0x6C, 0x18, 0xF1]
+          bus: j1850vpw
+        - id: ficm
+          name: "Fuel Injection Control Module"
+          address: !J1850
+            node: 0x11
+            header: [0x6C, 0x11, 0xF1]
+          bus: j1850vpw
+        - id: bcm
+          name: "Body Control Module"
+          address: !J1850
+            node: 0x40
+            header: [0x6C, 0x40, 0xF1]
+          bus: j1850vpw
+        - id: abs
+          name: "Electronic Brake Control Module"
+          address: !J1850
+            node: 0x29
+            header: [0x6C, 0x29, 0xF1]
+          bus: j1850vpw
       description: "Class 2 J1850 VPW bus"
   elm327_protocol_code: "2"
 
@@ -113,19 +144,115 @@ enhanced_pids:
     module: ecm
     value_type: Scalar
     confidence: Community
-    command_suffix: null
+    command_suffix: [1]
   - service_id: 0x22
-    did: 0x1170
-    name: "Fuel Rail Pressure"
-    unit: "kPa"
-    formula: !TwoByte
-      scale: 10.0
-      offset: 0.0
+    did: 0x1630
+    name: "Injector Balance Rate Cyl 2"
+    unit: "mm3"
+    formula: !Centered
+      center: 32768.0
+      divisor: 64.0
     bytes: 2
     module: ecm
     value_type: Scalar
-    confidence: Verified
-    command_suffix: null
+    confidence: Community
+    command_suffix: [1]
+  - service_id: 0x22
+    did: 0x1631
+    name: "Injector Balance Rate Cyl 3"
+    unit: "mm3"
+    formula: !Centered
+      center: 32768.0
+      divisor: 64.0
+    bytes: 2
+    module: ecm
+    value_type: Scalar
+    confidence: Community
+    command_suffix: [1]
+  - service_id: 0x22
+    did: 0x1632
+    name: "Injector Balance Rate Cyl 4"
+    unit: "mm3"
+    formula: !Centered
+      center: 32768.0
+      divisor: 64.0
+    bytes: 2
+    module: ecm
+    value_type: Scalar
+    confidence: Community
+    command_suffix: [1]
+  - service_id: 0x22
+    did: 0x1633
+    name: "Injector Balance Rate Cyl 5"
+    unit: "mm3"
+    formula: !Centered
+      center: 32768.0
+      divisor: 64.0
+    bytes: 2
+    module: ecm
+    value_type: Scalar
+    confidence: Community
+    command_suffix: [1]
+  - service_id: 0x22
+    did: 0x1634
+    name: "Injector Balance Rate Cyl 6"
+    unit: "mm3"
+    formula: !Centered
+      center: 32768.0
+      divisor: 64.0
+    bytes: 2
+    module: ecm
+    value_type: Scalar
+    confidence: Community
+    command_suffix: [1]
+  - service_id: 0x22
+    did: 0x1635
+    name: "Injector Balance Rate Cyl 7"
+    unit: "mm3"
+    formula: !Centered
+      center: 32768.0
+      divisor: 64.0
+    bytes: 2
+    module: ecm
+    value_type: Scalar
+    confidence: Community
+    command_suffix: [1]
+  - service_id: 0x22
+    did: 0x1636
+    name: "Injector Balance Rate Cyl 8"
+    unit: "mm3"
+    formula: !Centered
+      center: 32768.0
+      divisor: 64.0
+    bytes: 2
+    module: ecm
+    value_type: Scalar
+    confidence: Community
+    command_suffix: [1]
+  - service_id: 0x22
+    did: 0x1543
+    name: "VGT Vane Position Actual"
+    unit: "%"
+    formula: !Linear
+      scale: 0.3921568627
+      offset: 0.0
+    bytes: 1
+    module: ecm
+    value_type: Scalar
+    confidence: Community
+    command_suffix: [1]
+  - service_id: 0x22
+    did: 0x1540
+    name: "VGT Vane Position Desired"
+    unit: "%"
+    formula: !Linear
+      scale: 0.3921568627
+      offset: 0.0
+    bytes: 1
+    module: ecm
+    value_type: Scalar
+    confidence: Community
+    command_suffix: [1]
   - service_id: 0x22
     did: 0x1948
     name: "Current Gear"
@@ -143,6 +270,48 @@ enhanced_pids:
     value_type: State
     confidence: Inferred
     command_suffix: null
+
+dtc_library:
+  ecm:
+    - code: "P003A"
+      meaning: "Turbocharger/Supercharger Boost Control A Position Exceeded Learning Limit"
+      severity: High
+      notes: "VGT vane learn limit reached; compare desired and actual vane position."
+      related_pids: [5440, 5443]
+      category: "turbo_boost"
+    - code: "P0234"
+      meaning: "Turbo/Supercharger Overboost Condition"
+      severity: Critical
+      notes: "LLY VGT vanes may be stuck closed; reduced power is likely."
+      related_pids: [5440, 5443]
+      category: "turbo_boost"
+    - code: "P0299"
+      meaning: "Turbo/Supercharger Underboost"
+      severity: High
+      notes: "Check VGT vanes, boost leaks, and intercooler boots."
+      related_pids: [5440, 5443]
+      category: "turbo_boost"
+    - code: "P2563"
+      meaning: "Turbo Boost Control Position Sensor Circuit"
+      severity: High
+      notes: "Check vane position sensor signal and VGT actual position."
+      related_pids: [5440, 5443]
+      category: "turbo_boost"
+    - code: "P2564"
+      meaning: "Turbo Boost Control Position Sensor Circuit Range/Performance"
+      severity: High
+      notes: "VGT position sensor range issue; verify sensor sweep and ground."
+      related_pids: [5440, 5443]
+      category: "turbo_boost"
+  tcm:
+    - code: "P0700"
+      meaning: "Transmission Control System Malfunction (ECM flag only)"
+      severity: Info
+      notes: "Query the TCM for the real transmission DTC."
+      related_pids: null
+      category: "transmission"
+  bcm: []
+  network: []
 
 diagnostic_rules:
   - name: p0700_redirect

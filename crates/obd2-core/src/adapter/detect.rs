@@ -1,6 +1,6 @@
 //! Chipset detection and capability probing.
 
-use super::{AdapterInfo, Chipset, Capabilities};
+use super::{AdapterInfo, Capabilities, Chipset};
 use crate::vehicle::Protocol;
 
 impl AdapterInfo {

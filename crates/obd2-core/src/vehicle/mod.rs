@@ -135,7 +135,10 @@ impl VinMatcher {
         // Check WMI prefix (first 3 chars)
         let wmi: String = chars[..3].iter().collect();
         let wmi_ok = self.wmi_prefixes.is_empty()
-            || self.wmi_prefixes.iter().any(|p| wmi.eq_ignore_ascii_case(p));
+            || self
+                .wmi_prefixes
+                .iter()
+                .any(|p| wmi.eq_ignore_ascii_case(p));
 
         // Check 8th digit (engine code)
         let digit_ok = self
@@ -150,9 +153,8 @@ impl VinMatcher {
             .as_ref()
             .map(|(min, max)| {
                 let (current, previous) = vin::decode_year_candidates(vin);
-                let in_range = |y: Option<i32>| {
-                    y.is_some_and(|y| y >= *min as i32 && y <= *max as i32)
-                };
+                let in_range =
+                    |y: Option<i32>| y.is_some_and(|y| y >= *min as i32 && y <= *max as i32);
                 // Accept if either VIN year cycle falls within range
                 in_range(current) || in_range(previous)
             })
@@ -368,8 +370,15 @@ pub enum RuleTrigger {
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub enum RuleAction {
-    QueryModule { module: String, service: u8 },
-    CheckFirst { pid: u16, module: String, reason: String },
+    QueryModule {
+        module: String,
+        service: u8,
+    },
+    CheckFirst {
+        pid: u16,
+        module: String,
+        reason: String,
+    },
     Alert(String),
     MonitorPids(Vec<u16>),
 }
@@ -800,6 +809,121 @@ mod tests {
         );
         let spec = &registry.specs()[0];
         assert_eq!(spec.identity.engine.code, "LLY");
+    }
+
+    #[test]
+    fn test_embedded_duramax_has_vgt_enhanced_pids() {
+        let registry = SpecRegistry::with_defaults();
+        let spec = registry
+            .specs()
+            .iter()
+            .find(|spec| spec.identity.engine.code == "LLY")
+            .expect("Duramax LLY spec should be embedded");
+        let dids: Vec<u16> = spec
+            .enhanced_pids
+            .iter()
+            .filter(|pid| pid.module == "ecm")
+            .map(|pid| pid.did)
+            .collect();
+
+        assert!(dids.contains(&0x1543), "missing VGT actual DID");
+        assert!(dids.contains(&0x1540), "missing VGT desired DID");
+        assert!(
+            !dids.contains(&0x119B),
+            "stale VGT actual DID should not be embedded"
+        );
+        assert!(
+            !dids.contains(&0x1191),
+            "stale VGT desired DID should not be embedded"
+        );
+    }
+
+    #[test]
+    fn test_embedded_duramax_has_all_injector_balance_rates() {
+        let registry = SpecRegistry::with_defaults();
+        let spec = registry
+            .specs()
+            .iter()
+            .find(|spec| spec.identity.engine.code == "LLY")
+            .expect("Duramax LLY spec should be embedded");
+        let expected = [
+            (0x162F, "Injector Balance Rate Cyl 1"),
+            (0x1630, "Injector Balance Rate Cyl 2"),
+            (0x1631, "Injector Balance Rate Cyl 3"),
+            (0x1632, "Injector Balance Rate Cyl 4"),
+            (0x1633, "Injector Balance Rate Cyl 5"),
+            (0x1634, "Injector Balance Rate Cyl 6"),
+            (0x1635, "Injector Balance Rate Cyl 7"),
+            (0x1636, "Injector Balance Rate Cyl 8"),
+        ];
+
+        for (did, name) in expected {
+            let pid = spec
+                .enhanced_pids
+                .iter()
+                .find(|pid| pid.module == "ecm" && pid.did == did)
+                .unwrap_or_else(|| panic!("missing {name} DID {did:#06X}"));
+            assert_eq!(pid.name, name);
+            assert_eq!(pid.unit, "mm3");
+            assert_eq!(pid.command_suffix.as_deref(), Some(&[0x01][..]));
+        }
+    }
+
+    #[test]
+    fn test_embedded_duramax_has_class2_dtc_modules() {
+        let registry = SpecRegistry::with_defaults();
+        let spec = registry
+            .specs()
+            .iter()
+            .find(|spec| spec.identity.engine.code == "LLY")
+            .expect("Duramax LLY spec should be embedded");
+        let j1850 = spec
+            .communication
+            .buses
+            .iter()
+            .find(|bus| bus.protocol == Protocol::J1850Vpw)
+            .expect("Duramax LLY should have a J1850 VPW bus");
+        let module_ids: Vec<&str> = j1850
+            .modules
+            .iter()
+            .map(|module| module.id.0.as_str())
+            .collect();
+
+        for expected in ["ecm", "tcm", "ficm", "bcm", "abs"] {
+            assert!(
+                module_ids.contains(&expected),
+                "missing Class 2 module {expected}"
+            );
+        }
+
+        let abs = j1850
+            .modules
+            .iter()
+            .find(|module| module.id.0 == "abs")
+            .expect("missing ABS/EBCM module");
+        assert!(matches!(
+            abs.address,
+            PhysicalAddress::J1850 {
+                node: 0x29,
+                header: [0x6C, 0x29, 0xF1]
+            }
+        ));
+    }
+
+    #[test]
+    fn test_embedded_duramax_has_turbo_dtc_enrichment() {
+        let registry = SpecRegistry::with_defaults();
+
+        let p2563 = registry
+            .lookup_dtc("P2563")
+            .expect("P2563 should be enriched");
+        assert_eq!(p2563.meaning, "Turbo Boost Control Position Sensor Circuit");
+        assert_eq!(p2563.severity, crate::protocol::dtc::Severity::High);
+
+        let p003a = registry
+            .lookup_dtc("P003A")
+            .expect("P003A should be enriched");
+        assert_eq!(p003a.severity, crate::protocol::dtc::Severity::High);
     }
 
     #[test]

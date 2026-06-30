@@ -1,13 +1,16 @@
 //! Mock adapter for testing.
 
-use std::collections::HashSet;
-use async_trait::async_trait;
+use super::{
+    Adapter, AdapterInfo, Capabilities, Chipset, InitializationReport, PhysicalTarget,
+    RoutedRequest,
+};
 use crate::error::Obd2Error;
-use crate::protocol::pid::Pid;
 use crate::protocol::dtc::Dtc;
+use crate::protocol::pid::Pid;
 use crate::protocol::service::ServiceRequest;
 use crate::vehicle::Protocol;
-use super::{Adapter, AdapterInfo, Capabilities, Chipset, InitializationReport, RoutedRequest};
+use async_trait::async_trait;
+use std::collections::HashSet;
 
 /// A mock adapter that simulates a vehicle for testing.
 ///
@@ -32,13 +35,10 @@ impl MockAdapter {
         let mut supported = HashSet::new();
         // Standard PIDs most vehicles support
         for pid in &[
-            0x00u8, 0x01, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
-            0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x1C, 0x1F,
-            0x20, 0x21, 0x23, 0x2C, 0x2D, 0x2E, 0x2F, 0x30,
-            0x31, 0x33, 0x3C, 0x3D, 0x3E, 0x3F,
-            0x40, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x49, 0x4A, 0x4C,
-            0x59, 0x5C, 0x5E,
-            0x60, 0x61, 0x62, 0x63,
+            0x00u8, 0x01, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+            0x0F, 0x10, 0x11, 0x1C, 0x1F, 0x20, 0x21, 0x23, 0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31,
+            0x33, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x49, 0x4A,
+            0x4C, 0x59, 0x5C, 0x5E, 0x60, 0x61, 0x62, 0x63,
         ] {
             supported.insert(Pid(*pid));
         }
@@ -51,16 +51,16 @@ impl MockAdapter {
                 capabilities: Capabilities {
                     can_clear_dtcs: true,
                     dual_can: false,
-                enhanced_diag: true,
-                battery_voltage: true,
-                adaptive_timing: true,
-                kline_init: true,
-                kline_wakeup: true,
-                can_filtering: true,
-                can_flow_control: true,
-                can_extended_addressing: true,
-                can_silent_mode: true,
-            },
+                    enhanced_diag: true,
+                    battery_voltage: true,
+                    adaptive_timing: true,
+                    kline_init: true,
+                    kline_wakeup: true,
+                    can_filtering: true,
+                    can_flow_control: true,
+                    can_extended_addressing: true,
+                    can_silent_mode: true,
+                },
             },
             vin: vin.to_string(),
             dtcs: Vec::new(),
@@ -78,58 +78,58 @@ impl MockAdapter {
     fn mock_pid_response(&self, pid: u8) -> Vec<u8> {
         match pid {
             // Engine performance (1-byte)
-            0x04 => vec![0x40],                     // Engine load: 25%
-            0x05 => vec![0x5A],                     // Coolant temp: 50°C (90-40)
-            0x06 => vec![0x80],                     // STFT Bank 1: 0%
-            0x07 => vec![0x80],                     // LTFT Bank 1: 0%
-            0x08 => vec![0x80],                     // STFT Bank 2: 0%
-            0x09 => vec![0x80],                     // LTFT Bank 2: 0%
-            0x0A => vec![0x64],                     // Fuel pressure: 300 kPa
-            0x0B => vec![0x65],                     // MAP: 101 kPa
-            0x0D => vec![0x00],                     // Speed: 0 km/h (idle)
-            0x0E => vec![0x8C],                     // Timing: 6°
-            0x0F => vec![0x41],                     // IAT: 25°C
-            0x11 => vec![0x26],                     // Throttle: 15%
-            0x1C => vec![0x06],                     // OBD standard: EOBD
-            0x2C => vec![0x1A],                     // Commanded EGR: 10%
-            0x2D => vec![0x80],                     // EGR error: 0%
-            0x2E => vec![0x40],                     // Commanded EVAP purge: 25%
-            0x2F => vec![0xB3],                     // Fuel tank: 70%
-            0x30 => vec![0x32],                     // Warm-ups since clear: 50
-            0x33 => vec![0x65],                     // Baro: 101 kPa
-            0x45 => vec![0x26],                     // Relative throttle: 15%
-            0x46 => vec![0x41],                     // Ambient: 25°C
-            0x47 => vec![0x40],                     // Abs throttle B: 25%
-            0x49 => vec![0x1A],                     // Accel pedal D: 10%
-            0x4A => vec![0x1A],                     // Accel pedal E: 10%
-            0x4C => vec![0x26],                     // Commanded throttle: 15%
-            0x5C => vec![0x78],                     // Oil temp: 80°C
-            0x61 => vec![0x8D],                     // Demanded torque: 16%
-            0x62 => vec![0x8D],                     // Actual torque: 16%
+            0x04 => vec![0x40], // Engine load: 25%
+            0x05 => vec![0x5A], // Coolant temp: 50°C (90-40)
+            0x06 => vec![0x80], // STFT Bank 1: 0%
+            0x07 => vec![0x80], // LTFT Bank 1: 0%
+            0x08 => vec![0x80], // STFT Bank 2: 0%
+            0x09 => vec![0x80], // LTFT Bank 2: 0%
+            0x0A => vec![0x64], // Fuel pressure: 300 kPa
+            0x0B => vec![0x65], // MAP: 101 kPa
+            0x0D => vec![0x00], // Speed: 0 km/h (idle)
+            0x0E => vec![0x8C], // Timing: 6°
+            0x0F => vec![0x41], // IAT: 25°C
+            0x11 => vec![0x26], // Throttle: 15%
+            0x1C => vec![0x06], // OBD standard: EOBD
+            0x2C => vec![0x1A], // Commanded EGR: 10%
+            0x2D => vec![0x80], // EGR error: 0%
+            0x2E => vec![0x40], // Commanded EVAP purge: 25%
+            0x2F => vec![0xB3], // Fuel tank: 70%
+            0x30 => vec![0x32], // Warm-ups since clear: 50
+            0x33 => vec![0x65], // Baro: 101 kPa
+            0x45 => vec![0x26], // Relative throttle: 15%
+            0x46 => vec![0x41], // Ambient: 25°C
+            0x47 => vec![0x40], // Abs throttle B: 25%
+            0x49 => vec![0x1A], // Accel pedal D: 10%
+            0x4A => vec![0x1A], // Accel pedal E: 10%
+            0x4C => vec![0x26], // Commanded throttle: 15%
+            0x5C => vec![0x78], // Oil temp: 80°C
+            0x61 => vec![0x8D], // Demanded torque: 16%
+            0x62 => vec![0x8D], // Actual torque: 16%
             // Engine performance (2-byte)
-            0x0C => vec![0x0A, 0xA0],               // RPM: 680
-            0x10 => vec![0x00, 0xFA],               // MAF: 2.5 g/s
-            0x1F => vec![0x00, 0x3C],               // Runtime: 60s
-            0x21 => vec![0x00, 0x00],               // Distance with MIL: 0 km
-            0x23 => vec![0x13, 0x88],               // Fuel rail gauge: 5000 kPa
-            0x31 => vec![0x27, 0x10],               // Distance since DTC clear: 10000 km
-            0x3C => vec![0x0F, 0xA0],               // Catalyst B1S1: 360°C
-            0x3D => vec![0x0F, 0xA0],               // Catalyst B2S1: 360°C
-            0x3E => vec![0x0B, 0xB8],               // Catalyst B1S2: 260°C
-            0x3F => vec![0x0B, 0xB8],               // Catalyst B2S2: 260°C
-            0x42 => vec![0x38, 0x5C],               // Voltage: 14.428V
-            0x43 => vec![0x00, 0x64],               // Absolute load: 39.2%
-            0x44 => vec![0x80, 0x00],               // Commanded equiv ratio: 1.0
-            0x59 => vec![0x00, 0xC8],               // Fuel rail abs: 200 kPa
-            0x5E => vec![0x00, 0x64],               // Fuel rate: 5.0 L/h
-            0x63 => vec![0x03, 0x7F],               // Reference torque: 895 Nm
+            0x0C => vec![0x0A, 0xA0], // RPM: 680
+            0x10 => vec![0x00, 0xFA], // MAF: 2.5 g/s
+            0x1F => vec![0x00, 0x3C], // Runtime: 60s
+            0x21 => vec![0x00, 0x00], // Distance with MIL: 0 km
+            0x23 => vec![0x13, 0x88], // Fuel rail gauge: 5000 kPa
+            0x31 => vec![0x27, 0x10], // Distance since DTC clear: 10000 km
+            0x3C => vec![0x0F, 0xA0], // Catalyst B1S1: 360°C
+            0x3D => vec![0x0F, 0xA0], // Catalyst B2S1: 360°C
+            0x3E => vec![0x0B, 0xB8], // Catalyst B1S2: 260°C
+            0x3F => vec![0x0B, 0xB8], // Catalyst B2S2: 260°C
+            0x42 => vec![0x38, 0x5C], // Voltage: 14.428V
+            0x43 => vec![0x00, 0x64], // Absolute load: 39.2%
+            0x44 => vec![0x80, 0x00], // Commanded equiv ratio: 1.0
+            0x59 => vec![0x00, 0xC8], // Fuel rail abs: 200 kPa
+            0x5E => vec![0x00, 0x64], // Fuel rate: 5.0 L/h
+            0x63 => vec![0x03, 0x7F], // Reference torque: 895 Nm
             // Bitmaps
-            0x00 => vec![0xBE, 0x3E, 0xB8, 0x11],  // Supported PIDs 01-20
-            0x01 => vec![0x00, 0x07, 0x65, 0x00],   // Monitor status
-            0x20 => vec![0x80, 0x12, 0xA0, 0x13],   // Supported PIDs 21-40
-            0x40 => vec![0xFA, 0xDC, 0x80, 0x00],   // Supported PIDs 41-60
-            0x60 => vec![0xE0, 0x00, 0x00, 0x00],   // Supported PIDs 61-80
-            _ => vec![0x00],                         // Unknown: return 0
+            0x00 => vec![0xBE, 0x3E, 0xB8, 0x11], // Supported PIDs 01-20
+            0x01 => vec![0x00, 0x07, 0x65, 0x00], // Monitor status
+            0x20 => vec![0x80, 0x12, 0xA0, 0x13], // Supported PIDs 21-40
+            0x40 => vec![0xFA, 0xDC, 0x80, 0x00], // Supported PIDs 41-60
+            0x60 => vec![0xE0, 0x00, 0x00, 0x00], // Supported PIDs 61-80
+            _ => vec![0x00],                      // Unknown: return 0
         }
     }
 
@@ -140,12 +140,14 @@ impl MockAdapter {
             61444 => {
                 let rpm_raw = (680.0_f64 / 0.125) as u16; // 5440
                 vec![
-                    0x00,                       // torque mode
-                    155,                        // demand torque: -125 + 155 = 30%
-                    155,                        // actual torque: -125 + 155 = 30%
-                    (rpm_raw & 0xFF) as u8,     // RPM low
-                    (rpm_raw >> 8) as u8,       // RPM high
-                    0xFF, 0xFF, 0xFF,           // reserved
+                    0x00,                   // torque mode
+                    155,                    // demand torque: -125 + 155 = 30%
+                    155,                    // actual torque: -125 + 155 = 30%
+                    (rpm_raw & 0xFF) as u8, // RPM low
+                    (rpm_raw >> 8) as u8,   // RPM high
+                    0xFF,
+                    0xFF,
+                    0xFF, // reserved
                 ]
             }
             // CCVS (65265): 0 km/h, brake off, cruise off
@@ -160,8 +162,12 @@ impl MockAdapter {
                 vec![
                     (rate_raw & 0xFF) as u8,
                     (rate_raw >> 8) as u8,
-                    0x00, 0x02,     // fuel economy
-                    0xFF, 0xFF, 0xFF, 0xFF,
+                    0x00,
+                    0x02, // fuel economy
+                    0xFF,
+                    0xFF,
+                    0xFF,
+                    0xFF,
                 ]
             }
             // DM1 (65226): no active DTCs
@@ -173,7 +179,9 @@ impl MockAdapter {
 }
 
 impl Default for MockAdapter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
@@ -263,7 +271,7 @@ impl Adapter for MockAdapter {
             0x27 => {
                 match req.data.first() {
                     Some(0x01) => Ok(vec![0xAA, 0xBB, 0xCC, 0xDD]), // Mock seed
-                    Some(0x02) => Ok(vec![]),                         // Key accepted
+                    Some(0x02) => Ok(vec![]),                       // Key accepted
                     _ => Ok(vec![]),
                 }
             }
@@ -290,11 +298,18 @@ impl Adapter for MockAdapter {
     }
 
     async fn routed_request(&mut self, req: &RoutedRequest) -> Result<Vec<u8>, Obd2Error> {
+        if matches!(req.target, PhysicalTarget::Addressed(_))
+            && matches!(req.service_id, 0x03 | 0x07 | 0x0A)
+        {
+            return Err(Obd2Error::NoData);
+        }
+
         self.request(&ServiceRequest {
             service_id: req.service_id,
             data: req.data.clone(),
             target: crate::protocol::service::Target::Broadcast,
-        }).await
+        })
+        .await
     }
 
     async fn supported_pids(&mut self) -> Result<HashSet<Pid>, Obd2Error> {
@@ -352,10 +367,7 @@ mod tests {
     #[tokio::test]
     async fn test_mock_adapter_read_dtcs() {
         let mut adapter = MockAdapter::new();
-        adapter.set_dtcs(vec![
-            Dtc::from_code("P0420"),
-            Dtc::from_code("P0171"),
-        ]);
+        adapter.set_dtcs(vec![Dtc::from_code("P0420"), Dtc::from_code("P0171")]);
         let req = ServiceRequest::read_dtcs();
         let response = adapter.request(&req).await.unwrap();
         assert_eq!(response.len(), 4); // 2 DTCs * 2 bytes each

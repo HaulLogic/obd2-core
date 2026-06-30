@@ -1,29 +1,29 @@
 //! Session orchestrator -- the primary entry point for consumers.
 
 mod diag_session;
-pub mod discovery;
 pub mod diagnostics;
+pub mod discovery;
 mod enhanced;
 mod modes;
 pub mod poller;
 pub mod threshold;
 
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 use crate::adapter::{
     Adapter, AdapterEvent, AdapterEventKind, InitializationReport, PhysicalTarget, ProbeAttempt,
     RoutedRequest,
 };
 use crate::error::Obd2Error;
-use crate::protocol::pid::Pid;
 use crate::protocol::dtc::{Dtc, DtcStatus};
 use crate::protocol::enhanced::{Reading, ReadingSource};
+use crate::protocol::pid::Pid;
 use crate::protocol::service::{ActuatorCommand, DiagSession, ServiceRequest, Target, VehicleInfo};
 use crate::transport::CaptureMetadata;
-use crate::vehicle::{VehicleSpec, VehicleProfile, SpecRegistry, ModuleId};
-use discovery::{DiscoveryProfile, VisibleEcu};
-use std::time::Instant;
+use crate::vehicle::{ModuleId, PhysicalAddress, SpecRegistry, VehicleProfile, VehicleSpec};
 pub use diag_session::{KeyFunction, SessionState as DiagnosticSessionState};
+use discovery::{DiscoveryProfile, VisibleEcu};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 /// The primary entry point for all OBD-II operations.
 ///
@@ -289,33 +289,34 @@ impl<A: Adapter> Session<A> {
     /// Read stored (confirmed) DTCs via broadcast.
     pub async fn read_dtcs(&mut self) -> Result<Vec<Dtc>, Obd2Error> {
         self.ensure_initialized().await?;
-        let req = ServiceRequest::read_dtcs();
-        let data = self.send_request(&req).await?;
-        Ok(modes::decode_dtc_bytes(&data, DtcStatus::Stored))
+        self.read_dtcs_with_target(0x03, DtcStatus::Stored, Target::Broadcast, None)
+            .await
     }
 
     /// Read pending DTCs (Mode 07).
     pub async fn read_pending_dtcs(&mut self) -> Result<Vec<Dtc>, Obd2Error> {
         self.ensure_initialized().await?;
-        let req = ServiceRequest {
-            service_id: 0x07,
-            data: vec![],
-            target: Target::Broadcast,
-        };
-        let data = self.send_request(&req).await?;
-        Ok(modes::decode_dtc_bytes(&data, DtcStatus::Pending))
+        self.read_dtcs_with_target(0x07, DtcStatus::Pending, Target::Broadcast, None)
+            .await
     }
 
     /// Read permanent DTCs (Mode 0A).
     pub async fn read_permanent_dtcs(&mut self) -> Result<Vec<Dtc>, Obd2Error> {
         self.ensure_initialized().await?;
-        let req = ServiceRequest {
-            service_id: 0x0A,
-            data: vec![],
-            target: Target::Broadcast,
-        };
-        let data = self.send_request(&req).await?;
-        Ok(modes::decode_dtc_bytes(&data, DtcStatus::Permanent))
+        self.read_dtcs_with_target(0x0A, DtcStatus::Permanent, Target::Broadcast, None)
+            .await
+    }
+
+    /// Read stored DTCs from a specific resolved module using standard Mode 03.
+    pub async fn read_dtcs_on_module(&mut self, module: ModuleId) -> Result<Vec<Dtc>, Obd2Error> {
+        self.ensure_initialized().await?;
+        self.read_dtcs_with_target(
+            0x03,
+            DtcStatus::Stored,
+            Target::Module(module.0.clone()),
+            Some(&module),
+        )
+        .await
     }
 
     /// Read and enrich all standard DTC classes.
@@ -323,7 +324,11 @@ impl<A: Adapter> Session<A> {
         self.ensure_initialized().await?;
 
         let mut all_dtcs = Vec::new();
-        all_dtcs.extend(self.read_dtcs().await?);
+        match self.read_dtcs().await {
+            Ok(mut stored) => all_dtcs.append(&mut stored),
+            Err(Obd2Error::NoData) => {}
+            Err(e) => return Err(e),
+        }
 
         if let Ok(mut pending) = self.read_pending_dtcs().await {
             all_dtcs.append(&mut pending);
@@ -332,9 +337,84 @@ impl<A: Adapter> Session<A> {
             all_dtcs.append(&mut permanent);
         }
 
+        for module in self.dtc_scan_modules() {
+            self.append_module_dtcs(&mut all_dtcs, &module).await;
+        }
+
         diagnostics::dedup_dtcs(&mut all_dtcs);
         diagnostics::enrich_dtcs(&mut all_dtcs, self.spec());
         Ok(all_dtcs)
+    }
+
+    async fn append_module_dtcs(&mut self, all_dtcs: &mut Vec<Dtc>, module: &ModuleId) {
+        for (service_id, status) in [
+            (0x03, DtcStatus::Stored),
+            (0x07, DtcStatus::Pending),
+            (0x0A, DtcStatus::Permanent),
+        ] {
+            match self
+                .read_dtcs_with_target(
+                    service_id,
+                    status,
+                    Target::Module(module.0.clone()),
+                    Some(module),
+                )
+                .await
+            {
+                Ok(mut dtcs) => all_dtcs.append(&mut dtcs),
+                Err(Obd2Error::NoData) => {}
+                Err(err) => {
+                    tracing::debug!(
+                        module = %module.0,
+                        service = %format_args!("{service_id:02X}"),
+                        "module DTC scan skipped: {err}"
+                    );
+                }
+            }
+        }
+    }
+
+    async fn read_dtcs_with_target(
+        &mut self,
+        service_id: u8,
+        status: DtcStatus,
+        target: Target,
+        source_module: Option<&ModuleId>,
+    ) -> Result<Vec<Dtc>, Obd2Error> {
+        let req = ServiceRequest {
+            service_id,
+            data: vec![],
+            target,
+        };
+        let data = self.send_request(&req).await?;
+        let mut dtcs = modes::decode_dtc_bytes(&data, status);
+        if let Some(module) = source_module {
+            for dtc in &mut dtcs {
+                dtc.source_module = Some(module.0.clone());
+            }
+        }
+        Ok(dtcs)
+    }
+
+    fn dtc_scan_modules(&self) -> Vec<ModuleId> {
+        let Some(discovery) = &self.discovery else {
+            return Vec::new();
+        };
+
+        let mut modules: Vec<ModuleId> = discovery
+            .modules
+            .iter()
+            .filter_map(|(id, resolved)| {
+                if let Some(active_bus) = discovery.active_bus.as_ref() {
+                    if resolved.bus != active_bus.id {
+                        return None;
+                    }
+                }
+                Some(id.clone())
+            })
+            .collect();
+        modules.sort_by(|a, b| a.0.cmp(&b.0));
+        modules
     }
 
     // -- Mode 04: Clear DTCs --
@@ -373,7 +453,8 @@ impl<A: Adapter> Session<A> {
         let req = ServiceRequest::read_vin();
         let data = self.send_request(&req).await?;
         // Filter printable ASCII, take first 17 chars
-        let vin: String = data.iter()
+        let vin: String = data
+            .iter()
             .filter(|&&b| (0x20..=0x7E).contains(&b))
             .map(|&b| b as char)
             .take(17)
@@ -381,7 +462,10 @@ impl<A: Adapter> Session<A> {
         if vin.len() == 17 {
             Ok(vin)
         } else {
-            Err(Obd2Error::ParseError(format!("VIN too short: {} chars", vin.len())))
+            Err(Obd2Error::ParseError(format!(
+                "VIN too short: {} chars",
+                vin.len()
+            )))
         }
     }
 
@@ -445,23 +529,35 @@ impl<A: Adapter> Session<A> {
         &mut self,
     ) -> Result<crate::protocol::service::ReadinessStatus, Obd2Error> {
         self.ensure_initialized().await?;
-        let data = self.send_request(&ServiceRequest::read_pid(Pid(0x01))).await?;
+        let data = self
+            .send_request(&ServiceRequest::read_pid(Pid(0x01)))
+            .await?;
         modes::decode_readiness(&data)
     }
 
     // -- Enhanced PIDs (Mode 21/22) --
 
     /// Read an enhanced PID from a specific module.
-    pub async fn read_enhanced(&mut self, did: u16, module: ModuleId) -> Result<Reading, Obd2Error> {
+    pub async fn read_enhanced(
+        &mut self,
+        did: u16,
+        module: ModuleId,
+    ) -> Result<Reading, Obd2Error> {
         self.ensure_initialized().await?;
-        // Look up the service ID for this enhanced PID from the spec
-        let service_id = self.lookup_enhanced_service_id(did, &module);
+        let epid = enhanced::find_enhanced_pid_from_spec(self.spec(), did, &module);
+        let service_id = epid
+            .map(|pid| pid.service_id)
+            .unwrap_or_else(|| self.lookup_enhanced_service_id(did, &module));
+        let mut request_data = vec![(did >> 8) as u8, (did & 0xFF) as u8];
+        if let Some(suffix) = epid.and_then(|pid| pid.command_suffix.as_deref()) {
+            request_data.extend_from_slice(suffix);
+        }
 
-        let req = ServiceRequest::enhanced_read(
+        let req = ServiceRequest {
             service_id,
-            did,
-            Target::Module(module.0.clone()),
-        );
+            data: request_data,
+            target: Target::Module(module.0.clone()),
+        };
         let data = self.send_request(&req).await?;
 
         let value = enhanced::decode_enhanced_value(self.spec(), did, &module, &data);
@@ -503,11 +599,14 @@ impl<A: Adapter> Session<A> {
 
             match self.send_request(&req).await {
                 Ok(data) if data.len() >= 2 => {
-                    let Some(sensor) = crate::protocol::service::O2SensorLocation::from_byte(sensor_byte) else {
+                    let Some(sensor) =
+                        crate::protocol::service::O2SensorLocation::from_byte(sensor_byte)
+                    else {
                         continue;
                     };
                     let raw_value = u16::from_be_bytes([data[0], data[1]]);
-                    let (test_name, unit, convert) = crate::protocol::service::o2_test_info(test_id);
+                    let (test_name, unit, convert) =
+                        crate::protocol::service::o2_test_info(test_id);
                     results.push(crate::protocol::service::O2TestResult {
                         test_id,
                         test_name,
@@ -561,41 +660,62 @@ impl<A: Adapter> Session<A> {
         self.ensure_initialized().await?;
         let vin = self.read_vin().await?;
 
-        let calibration_ids = match self.send_request(&ServiceRequest {
-            service_id: 0x09,
-            data: vec![0x04],
-            target: Target::Broadcast,
-        }).await {
+        let calibration_ids = match self
+            .send_request(&ServiceRequest {
+                service_id: 0x09,
+                data: vec![0x04],
+                target: Target::Broadcast,
+            })
+            .await
+        {
             Ok(data) => {
-                let cal_str: String = data.iter()
+                let cal_str: String = data
+                    .iter()
                     .filter(|&&b| (0x20..=0x7E).contains(&b))
                     .map(|&b| b as char)
                     .collect();
-                if cal_str.is_empty() { vec![] } else { vec![cal_str] }
+                if cal_str.is_empty() {
+                    vec![]
+                } else {
+                    vec![cal_str]
+                }
             }
             Err(_) => vec![],
         };
 
-        let cvns = match self.send_request(&ServiceRequest {
-            service_id: 0x09,
-            data: vec![0x06],
-            target: Target::Broadcast,
-        }).await {
-            Ok(data) if data.len() >= 4 => vec![u32::from_be_bytes([data[0], data[1], data[2], data[3]])],
+        let cvns = match self
+            .send_request(&ServiceRequest {
+                service_id: 0x09,
+                data: vec![0x06],
+                target: Target::Broadcast,
+            })
+            .await
+        {
+            Ok(data) if data.len() >= 4 => {
+                vec![u32::from_be_bytes([data[0], data[1], data[2], data[3]])]
+            }
             _ => vec![],
         };
 
-        let ecu_name = match self.send_request(&ServiceRequest {
-            service_id: 0x09,
-            data: vec![0x0A],
-            target: Target::Broadcast,
-        }).await {
+        let ecu_name = match self
+            .send_request(&ServiceRequest {
+                service_id: 0x09,
+                data: vec![0x0A],
+                target: Target::Broadcast,
+            })
+            .await
+        {
             Ok(data) => {
-                let name: String = data.iter()
+                let name: String = data
+                    .iter()
                     .filter(|&&b| (0x20..=0x7E).contains(&b))
                     .map(|&b| b as char)
                     .collect();
-                if name.is_empty() { None } else { Some(name) }
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(name)
+                }
             }
             Err(_) => None,
         };
@@ -651,8 +771,12 @@ impl<A: Adapter> Session<A> {
     /// Read and decode J1939 active DTCs (DM1 — PGN 65226).
     ///
     /// Returns J1939-format DTCs (SPN + FMI), distinct from OBD-II P-codes.
-    pub async fn read_j1939_dtcs(&mut self) -> Result<Vec<crate::protocol::j1939::J1939Dtc>, Obd2Error> {
-        let data = self.read_j1939_pgn(crate::protocol::j1939::Pgn::DM1).await?;
+    pub async fn read_j1939_dtcs(
+        &mut self,
+    ) -> Result<Vec<crate::protocol::j1939::J1939Dtc>, Obd2Error> {
+        let data = self
+            .read_j1939_pgn(crate::protocol::j1939::Pgn::DM1)
+            .await?;
         Ok(crate::protocol::j1939::decode_dm1(&data))
     }
 
@@ -682,7 +806,9 @@ impl<A: Adapter> Session<A> {
         self.send_request(&req).await?;
         self.diagnostic_state = match session {
             DiagSession::Default => DiagnosticSessionState::Default,
-            DiagSession::Extended => DiagnosticSessionState::Extended { unlocked_modules: vec![] },
+            DiagSession::Extended => DiagnosticSessionState::Extended {
+                unlocked_modules: vec![],
+            },
             DiagSession::Programming => DiagnosticSessionState::Programming,
         };
         Ok(())
@@ -748,7 +874,8 @@ impl<A: Adapter> Session<A> {
     ) -> Result<(), Obd2Error> {
         self.ensure_initialized().await?;
         match &self.diagnostic_state {
-            DiagnosticSessionState::Extended { unlocked_modules } if unlocked_modules.contains(&module.0) => {}
+            DiagnosticSessionState::Extended { unlocked_modules }
+                if unlocked_modules.contains(&module.0) => {}
             _ => return Err(Obd2Error::SecurityRequired),
         }
         let mut data = vec![(did >> 8) as u8, (did & 0xFF) as u8];
@@ -830,12 +957,20 @@ impl<A: Adapter> Session<A> {
     /// }
     /// # }
     /// ```
-    pub fn evaluate_threshold(&self, pid: Pid, value: f64) -> Option<crate::vehicle::ThresholdResult> {
+    pub fn evaluate_threshold(
+        &self,
+        pid: Pid,
+        value: f64,
+    ) -> Option<crate::vehicle::ThresholdResult> {
         threshold::evaluate_pid_threshold(self.spec(), pid, value)
     }
 
     /// Evaluate an enhanced PID (DID) reading against the matched spec's thresholds.
-    pub fn evaluate_enhanced_threshold(&self, did: u16, value: f64) -> Option<crate::vehicle::ThresholdResult> {
+    pub fn evaluate_enhanced_threshold(
+        &self,
+        did: u16,
+        value: f64,
+    ) -> Option<crate::vehicle::ThresholdResult> {
         threshold::evaluate_enhanced_threshold(self.spec(), did, value)
     }
 
@@ -882,7 +1017,12 @@ impl<A: Adapter> Session<A> {
     }
 
     /// Raw service request (escape hatch).
-    pub async fn raw_request(&mut self, service: u8, data: &[u8], target: Target) -> Result<Vec<u8>, Obd2Error> {
+    pub async fn raw_request(
+        &mut self,
+        service: u8,
+        data: &[u8],
+        target: Target,
+    ) -> Result<Vec<u8>, Obd2Error> {
         self.ensure_initialized().await?;
         let req = ServiceRequest {
             service_id: service,
@@ -890,6 +1030,38 @@ impl<A: Adapter> Session<A> {
             target,
         };
         self.send_request(&req).await
+    }
+
+    /// Raw service request to an already resolved physical address.
+    ///
+    /// This is for callers that own routing policy above the session layer. It
+    /// still keeps the adapter, busy flag, visible-target recording, and
+    /// adapter-event handling inside `Session`.
+    pub async fn raw_physical_request(
+        &mut self,
+        service: u8,
+        data: &[u8],
+        address: PhysicalAddress,
+    ) -> Result<Vec<u8>, Obd2Error> {
+        self.ensure_initialized().await?;
+        if self.request_in_flight {
+            return Err(Obd2Error::AdapterBusy);
+        }
+        self.request_in_flight = true;
+        let routed = RoutedRequest {
+            service_id: service,
+            data: data.to_vec(),
+            target: PhysicalTarget::Addressed(address),
+        };
+        self.record_visible_target(&routed.target);
+        let result = self.adapter.routed_request(&routed).await;
+        let events = self.adapter.drain_events();
+        self.request_in_flight = false;
+        self.apply_adapter_events(&events);
+        if result.is_ok() {
+            self.mark_connection_active_if_recovered();
+        }
+        result
     }
 
     async fn ensure_initialized(&mut self) -> Result<(), Obd2Error> {
@@ -970,7 +1142,9 @@ impl<A: Adapter> Session<A> {
     fn mark_connection_active_if_recovered(&mut self) {
         if matches!(
             &self.connection_state,
-            ConnectionState::IgnitionOff | ConnectionState::Disconnected | ConnectionState::Error(_)
+            ConnectionState::IgnitionOff
+                | ConnectionState::Disconnected
+                | ConnectionState::Error(_)
         ) {
             self.connection_state = ConnectionState::Connected;
         }
@@ -1022,7 +1196,9 @@ impl<A: Adapter> Session<A> {
     fn resolve_request(&self, req: &ServiceRequest) -> Result<RoutedRequest, Obd2Error> {
         let target = match &req.target {
             Target::Broadcast => PhysicalTarget::Broadcast,
-            Target::Module(module) => PhysicalTarget::Addressed(self.resolve_module_address(module)?),
+            Target::Module(module) => {
+                PhysicalTarget::Addressed(self.resolve_module_address(module)?)
+            }
         };
         Ok(RoutedRequest {
             service_id: req.service_id,
@@ -1031,11 +1207,18 @@ impl<A: Adapter> Session<A> {
         })
     }
 
-    fn resolve_module_address(&self, module: &str) -> Result<crate::vehicle::PhysicalAddress, Obd2Error> {
-        let discovery = self.discovery.as_ref()
+    fn resolve_module_address(
+        &self,
+        module: &str,
+    ) -> Result<crate::vehicle::PhysicalAddress, Obd2Error> {
+        let discovery = self
+            .discovery
+            .as_ref()
             .ok_or_else(|| Obd2Error::Adapter("no discovery profile available".into()))?;
         let module_id = ModuleId::new(module);
-        let resolved = discovery.modules.get(&module_id)
+        let resolved = discovery
+            .modules
+            .get(&module_id)
             .ok_or_else(|| Obd2Error::ModuleNotFound(module.to_string()))?;
         if let Some(active_bus) = discovery.active_bus.as_ref() {
             if resolved.bus != active_bus.id {
@@ -1067,7 +1250,10 @@ impl<A: Adapter> Session<A> {
                 | AdapterEventKind::RxError
                 | AdapterEventKind::Stopped => {
                     self.connection_state = ConnectionState::Error(
-                        event.detail.clone().unwrap_or_else(|| format!("{:?}", event.kind))
+                        event
+                            .detail
+                            .clone()
+                            .unwrap_or_else(|| format!("{:?}", event.kind)),
                     );
                 }
                 AdapterEventKind::Err94 | AdapterEventKind::LowVoltageReset => {
@@ -1121,7 +1307,10 @@ impl<A: Adapter> Session<A> {
         });
     }
 
-    fn lookup_module_for_address(&self, address: &crate::vehicle::PhysicalAddress) -> (Option<crate::vehicle::BusId>, Option<ModuleId>) {
+    fn lookup_module_for_address(
+        &self,
+        address: &crate::vehicle::PhysicalAddress,
+    ) -> (Option<crate::vehicle::BusId>, Option<ModuleId>) {
         let Some(spec) = self.spec() else {
             return (None, None);
         };
@@ -1169,7 +1358,11 @@ fn capture_transport_type(name: &str) -> String {
     let lower = name.to_ascii_lowercase();
     if lower.contains("obdlink") || lower.contains("ble") {
         "ble".to_string()
-    } else if lower.contains("tty") || lower.contains("cu.") || lower.contains("com") || lower == "mock" {
+    } else if lower.contains("tty")
+        || lower.contains("cu.")
+        || lower.contains("com")
+        || lower == "mock"
+    {
         "serial".to_string()
     } else {
         "transport".to_string()
@@ -1189,12 +1382,15 @@ impl<A: Adapter> std::fmt::Debug for Session<A> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use crate::adapter::elm327::Elm327Adapter;
     use crate::adapter::mock::MockAdapter;
-    use crate::transport::LoggingTransport;
     use crate::transport::mock::MockTransport;
-    use crate::vehicle::{BusConfig, BusId, CommunicationSpec, EngineSpec, Module, PhysicalAddress, SpecIdentity, VehicleSpec, VinMatcher};
+    use crate::transport::LoggingTransport;
+    use crate::vehicle::{
+        BusConfig, BusId, CommunicationSpec, EngineSpec, Module, PhysicalAddress, SpecIdentity,
+        VehicleSpec, VinMatcher,
+    };
+    use std::collections::HashMap;
 
     fn test_spec_with_modules() -> VehicleSpec {
         VehicleSpec {
@@ -1298,6 +1494,20 @@ mod tests {
         ));
     }
 
+    fn j1850_spec_with_ecm_tcm() -> VehicleSpec {
+        let mut spec = test_spec_with_modules();
+        spec.communication.buses[0].modules.push(Module {
+            id: ModuleId::new("tcm"),
+            name: "TCM".into(),
+            address: PhysicalAddress::J1850 {
+                node: 0x18,
+                header: [0x6C, 0x18, 0xF1],
+            },
+            bus: BusId("j1850vpw".into()),
+        });
+        spec
+    }
+
     #[tokio::test]
     async fn test_session_read_pid() {
         let adapter = MockAdapter::new();
@@ -1314,7 +1524,10 @@ mod tests {
     async fn test_session_read_multiple_pids() {
         let adapter = MockAdapter::new();
         let mut session = Session::new(adapter);
-        let results = session.read_pids(&[Pid::ENGINE_RPM, Pid::COOLANT_TEMP, Pid::VEHICLE_SPEED]).await.unwrap();
+        let results = session
+            .read_pids(&[Pid::ENGINE_RPM, Pid::COOLANT_TEMP, Pid::VEHICLE_SPEED])
+            .await
+            .unwrap();
         assert_eq!(results.len(), 3);
     }
 
@@ -1343,7 +1556,10 @@ mod tests {
         let vin = session.read_vin().await.unwrap();
         assert_eq!(vin, "1GCHK23224F000001");
         let discovery = session.discovery().expect("discovery should be populated");
-        assert_eq!(discovery.selected_protocol, crate::vehicle::Protocol::Can11Bit500);
+        assert_eq!(
+            discovery.selected_protocol,
+            crate::vehicle::Protocol::Can11Bit500
+        );
     }
 
     #[tokio::test]
@@ -1357,7 +1573,10 @@ mod tests {
         assert_eq!(profile.spec.as_ref().unwrap().identity.engine.code, "LLY");
         assert!(session.initialized);
         let discovery = session.discovery().expect("discovery should be populated");
-        assert_eq!(discovery.selected_protocol, crate::vehicle::Protocol::Can11Bit500);
+        assert_eq!(
+            discovery.selected_protocol,
+            crate::vehicle::Protocol::Can11Bit500
+        );
         assert_eq!(discovery.active_bus.as_ref().unwrap().id.0, "j1850vpw");
     }
 
@@ -1372,10 +1591,7 @@ mod tests {
     #[tokio::test]
     async fn test_session_read_dtcs() {
         let mut adapter = MockAdapter::new();
-        adapter.set_dtcs(vec![
-            Dtc::from_code("P0420"),
-            Dtc::from_code("P0171"),
-        ]);
+        adapter.set_dtcs(vec![Dtc::from_code("P0420"), Dtc::from_code("P0171")]);
         let mut session = Session::new(adapter);
         let dtcs = session.read_dtcs().await.unwrap();
         assert_eq!(dtcs.len(), 2);
@@ -1430,6 +1646,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_session_read_all_dtcs_continues_when_stored_no_data() {
+        let mut transport = MockTransport::new();
+        transport.expect("ATZ", "ELM327 v2.1\r\r>");
+        transport.expect("STI", "?\r>");
+        transport.expect("ATE0", "OK\r>");
+        transport.expect("ATL0", "OK\r>");
+        transport.expect("ATH0", "OK\r>");
+        transport.expect("ATS0", "OK\r>");
+        transport.expect("ATAT1", "OK\r>");
+        transport.expect("ATSP0", "OK\r>");
+        transport.expect("0100", "41 00 BE 3E B8 11\r>");
+        transport.expect("ATDPN", "A6\r>");
+        transport.expect("ATCAF1", "OK\r>");
+        transport.expect("ATCFC1", "OK\r>");
+        transport.expect("03", "NO DATA\r>");
+        transport.expect("07", "47 01 71\r>");
+        transport.expect("0A", "NO DATA\r>");
+
+        let adapter = Elm327Adapter::new(Box::new(transport));
+        let mut session = Session::new(adapter);
+        let dtcs = session.read_all_dtcs().await.unwrap();
+
+        assert_eq!(dtcs.len(), 1);
+        assert_eq!(dtcs[0].code, "P0171");
+        assert_eq!(dtcs[0].status, DtcStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn test_session_read_all_dtcs_scans_active_j1850_modules() {
+        let mut transport = MockTransport::new();
+        setup_elm_init_j1850(&mut transport);
+        transport.expect("03", "NO DATA\r>");
+        transport.expect("07", "NO DATA\r>");
+        transport.expect("0A", "NO DATA\r>");
+        transport.expect("AT SH 6C10F1", "OK\r>");
+        transport.expect("03", "43 25 63\r>");
+        transport.expect("07", "NO DATA\r>");
+        transport.expect("0A", "NO DATA\r>");
+        transport.expect("AT SH 6C18F1", "OK\r>");
+        transport.expect("03", "43 07 00\r>");
+        transport.expect("07", "NO DATA\r>");
+        transport.expect("0A", "NO DATA\r>");
+
+        let adapter = Elm327Adapter::new(Box::new(transport));
+        let mut session = Session::new(adapter);
+        let spec = j1850_spec_with_ecm_tcm();
+        set_profile_and_discovery(&mut session, spec, crate::vehicle::Protocol::J1850Vpw);
+        session.adapter.initialize().await.unwrap();
+        session.refresh_discovery_profile();
+
+        let dtcs = session.read_all_dtcs().await.unwrap();
+
+        assert!(dtcs
+            .iter()
+            .any(|dtc| dtc.code == "P2563" && dtc.source_module.as_deref() == Some("ecm")));
+        assert!(dtcs
+            .iter()
+            .any(|dtc| dtc.code == "P0700" && dtc.source_module.as_deref() == Some("tcm")));
+    }
+
+    #[tokio::test]
     async fn test_session_read_o2_monitoring_owned_by_session() {
         let adapter = MockAdapter::new();
         let mut session = Session::new(adapter);
@@ -1461,7 +1738,10 @@ mod tests {
         transport.expect("ATDPN", "A6\r>");
         transport.expect("ATCAF1", "OK\r>");
         transport.expect("ATCFC1", "OK\r>");
-        transport.expect("0902", "49 02 01 31 47 43 48 4B 32 33 32 32 34 46 30 30 30 30 30 31\r>");
+        transport.expect(
+            "0902",
+            "49 02 01 31 47 43 48 4B 32 33 32 32 34 46 30 30 30 30 30 31\r>",
+        );
         transport.expect("0100", "41 00 BE 3E B8 11\r>");
 
         let adapter = Elm327Adapter::new(Box::new(LoggingTransport::new(transport)));
@@ -1473,14 +1753,22 @@ mod tests {
         session.initialize().await.unwrap();
         let initial = session.raw_capture_path().unwrap().to_path_buf();
         assert!(initial.exists());
-        assert!(initial.file_name().unwrap().to_string_lossy().contains("unknown"));
+        assert!(initial
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("unknown"));
 
         let profile = session.identify_vehicle().await.unwrap();
         assert_eq!(profile.vin, "1GCHK23224F000001");
 
         let renamed = session.raw_capture_path().unwrap().to_path_buf();
         assert!(renamed.exists());
-        assert!(renamed.file_name().unwrap().to_string_lossy().contains("1GCHK23224F000001"));
+        assert!(renamed
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("1GCHK23224F000001"));
     }
 
     #[tokio::test]
@@ -1496,11 +1784,17 @@ mod tests {
 
         let first = session.read_pid(Pid::ENGINE_RPM).await;
         assert!(first.is_err());
-        assert!(matches!(session.connection_state(), &ConnectionState::IgnitionOff));
+        assert!(matches!(
+            session.connection_state(),
+            &ConnectionState::IgnitionOff
+        ));
 
         let second = session.read_pid(Pid::ENGINE_RPM).await.unwrap();
         assert!(second.value.as_f64().unwrap() > 0.0);
-        assert!(matches!(session.connection_state(), &ConnectionState::Connected));
+        assert!(matches!(
+            session.connection_state(),
+            &ConnectionState::Connected
+        ));
     }
 
     #[test]
@@ -1538,7 +1832,48 @@ mod tests {
         session.adapter.initialize().await.unwrap();
         session.refresh_discovery_profile();
 
-        let reading = session.read_enhanced(0x162F, ModuleId::new("ecm")).await.unwrap();
+        let reading = session
+            .read_enhanced(0x162F, ModuleId::new("ecm"))
+            .await
+            .unwrap();
+        assert_eq!(reading.raw_bytes, vec![0x80, 0x00]);
+    }
+
+    #[tokio::test]
+    async fn test_session_enhanced_request_appends_command_suffix() {
+        let mut transport = MockTransport::new();
+        setup_elm_init_j1850(&mut transport);
+        transport.expect("AT SH 6C10F1", "OK\r>");
+        transport.expect("22162F01", "62 16 2F 80 00\r>");
+
+        let adapter = Elm327Adapter::new(Box::new(transport));
+        let mut session = Session::new(adapter);
+        let mut spec = test_spec_with_modules();
+        spec.enhanced_pids
+            .push(crate::protocol::enhanced::EnhancedPid {
+                service_id: 0x22,
+                did: 0x162F,
+                name: "Balance Rate".into(),
+                unit: "mm3".into(),
+                formula: crate::protocol::enhanced::Formula::Centered {
+                    center: 32768.0,
+                    divisor: 64.0,
+                },
+                bytes: 2,
+                module: "ecm".into(),
+                value_type: crate::protocol::pid::ValueType::Scalar,
+                confidence: crate::protocol::enhanced::Confidence::Community,
+                command_suffix: Some(vec![0x01]),
+            });
+        set_profile_and_discovery(&mut session, spec, crate::vehicle::Protocol::J1850Vpw);
+        session.adapter.initialize().await.unwrap();
+        session.refresh_discovery_profile();
+
+        let reading = session
+            .read_enhanced(0x162F, ModuleId::new("ecm"))
+            .await
+            .unwrap();
+
         assert_eq!(reading.raw_bytes, vec![0x80, 0x00]);
     }
 
@@ -1557,8 +1892,14 @@ mod tests {
         session.adapter.initialize().await.unwrap();
         set_profile_and_discovery(&mut session, spec, crate::vehicle::Protocol::Can11Bit500);
 
-        let first = session.read_enhanced(0x1234, ModuleId::new("ecm")).await.unwrap();
-        let second = session.read_enhanced(0x1235, ModuleId::new("tcm")).await.unwrap();
+        let first = session
+            .read_enhanced(0x1234, ModuleId::new("ecm"))
+            .await
+            .unwrap();
+        let second = session
+            .read_enhanced(0x1235, ModuleId::new("tcm"))
+            .await
+            .unwrap();
         assert_eq!(first.raw_bytes, vec![0x12, 0x34]);
         assert_eq!(second.raw_bytes, vec![0x56, 0x78]);
     }
@@ -1578,7 +1919,10 @@ mod tests {
         session.adapter.initialize().await.unwrap();
         set_profile_and_discovery(&mut session, spec, crate::vehicle::Protocol::Can11Bit500);
 
-        let _ = session.read_enhanced(0x1234, ModuleId::new("ecm")).await.unwrap();
+        let _ = session
+            .read_enhanced(0x1234, ModuleId::new("ecm"))
+            .await
+            .unwrap();
         let rpm = session.read_pid(Pid::ENGINE_RPM).await.unwrap();
         assert_eq!(rpm.value.as_f64().unwrap(), 680.0);
     }
@@ -1588,7 +1932,10 @@ mod tests {
         let adapter = MockAdapter::new();
         let mut session = Session::new(adapter);
         session.initialized = true;
-        let err = session.read_enhanced(0x1234, ModuleId::new("ecm")).await.unwrap_err();
+        let err = session
+            .read_enhanced(0x1234, ModuleId::new("ecm"))
+            .await
+            .unwrap_err();
         assert!(matches!(err, Obd2Error::Adapter(_)));
     }
 
@@ -1598,7 +1945,10 @@ mod tests {
         let mut session = Session::new(adapter);
         let spec = test_spec_with_modules();
         set_profile_and_discovery(&mut session, spec, crate::vehicle::Protocol::J1850Vpw);
-        let err = session.read_enhanced(0x1234, ModuleId::new("unknown")).await.unwrap_err();
+        let err = session
+            .read_enhanced(0x1234, ModuleId::new("unknown"))
+            .await
+            .unwrap_err();
         assert!(matches!(err, Obd2Error::ModuleNotFound(_)));
     }
 
@@ -1647,7 +1997,10 @@ mod tests {
             visible_ecus: Vec::new(),
         });
 
-        let err = session.read_enhanced(0x1234, ModuleId::new("tcm")).await.unwrap_err();
+        let err = session
+            .read_enhanced(0x1234, ModuleId::new("tcm"))
+            .await
+            .unwrap_err();
         assert!(matches!(err, Obd2Error::BusNotAvailable(_)));
     }
 
@@ -1745,8 +2098,30 @@ mod tests {
     async fn test_session_raw_request() {
         let adapter = MockAdapter::new();
         let mut session = Session::new(adapter);
-        let data = session.raw_request(0x09, &[0x02], Target::Broadcast).await.unwrap();
+        let data = session
+            .raw_request(0x09, &[0x02], Target::Broadcast)
+            .await
+            .unwrap();
         assert!(!data.is_empty()); // VIN bytes
+    }
+
+    #[tokio::test]
+    async fn test_session_raw_physical_request_does_not_need_discovery() {
+        let adapter = MockAdapter::new();
+        let mut session = Session::new(adapter);
+        let data = session
+            .raw_physical_request(
+                0x22,
+                &[0xF0, 0x01],
+                PhysicalAddress::Can11Bit {
+                    request_id: 0x7E0,
+                    response_id: 0x7E8,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(data, vec![0x80, 0x00]);
     }
 
     #[tokio::test]
@@ -1782,10 +2157,7 @@ mod tests {
             .actuator_control(0x1196, ModuleId::new("tcm"), &ActuatorCommand::Activate)
             .await
             .unwrap();
-        session
-            .tester_present(ModuleId::new("tcm"))
-            .await
-            .unwrap();
+        session.tester_present(ModuleId::new("tcm")).await.unwrap();
         session
             .end_diagnostic_session(ModuleId::new("tcm"))
             .await
@@ -1877,7 +2249,10 @@ mod tests {
         let _ = session.initialize().await.unwrap();
         session.refresh_discovery_profile();
 
-        let _ = session.read_enhanced(0x162F, ModuleId::new("tcm")).await.unwrap();
+        let _ = session
+            .read_enhanced(0x162F, ModuleId::new("tcm"))
+            .await
+            .unwrap();
 
         let visible = session.visible_ecus();
         assert_eq!(visible.len(), 1);

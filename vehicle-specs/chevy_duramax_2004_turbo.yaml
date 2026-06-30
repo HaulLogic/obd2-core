@@ -138,9 +138,9 @@ module_addresses:
     description: "Instrument Panel Cluster"
     header_physical: "6C 20 F1"
   abs_ebcm:
-    node: "0x28"
+    node: "0x29"
     description: "ABS / Electronic Brake Control Module"
-    header_physical: "6C 28 F1"
+    header_physical: "6C 29 F1"
   sir:
     node: "0x58"
     description: "Supplemental Inflatable Restraint (Airbag)"
@@ -191,7 +191,7 @@ elm327_init:
     abs_enhanced:  { cmd: "AT SH 6C 28 F1", purpose: "Physical addressing for ABS Mode 22" }
     ficm_enhanced: { cmd: "AT SH 6C 11 F1", purpose: "Physical addressing for FICM Mode 22" }
   notes:
-    - "After AT SH, send the service + PID bytes only (e.g. '22 11 9B')"
+    - "After AT SH, send the service + PID bytes only (e.g. '22 15 43 01')"
     - "Always switch back to 'AT SH 68 6A F1' before standard OBD queries"
     - "Use 'AT MA' to monitor all bus traffic (passive listen mode)"
     - "Use 'AT MR xx' to monitor messages from a specific node"
@@ -351,7 +351,7 @@ diagnostic_services:
     note: "Requires security access (Mode 27) on most modules. Use with caution."
     examples:
       - { name: "EGR Valve Test",         did: "11 96", control: "0x03 = short-term adjustment", target: "ECM" }
-      - { name: "VGT Vane Test",          did: "11 9B", control: "0x03 = short-term adjustment", target: "ECM" }
+      - { name: "VGT Vane Position Readback", did: "15 43", control: "read-only", target: "ECM" }
       - { name: "Glow Plug Relay Test",   did: "11 4E", control: "0x03 = enable / 0x00 = return to ECM", target: "ECM" }
       - { name: "Cooling Fan Relay Test", did: "11 44", control: "0x03 = activate", target: "ECM" }
     warning: "Improper use can damage components. Never command actuators with engine running unless specified."
@@ -423,7 +423,7 @@ diagnostic_logic_overrides:
     description: "LLY turbo vane sticking is the #1 reliability issue on this platform"
     symptoms: ["P0234 (overboost)", "P0299 (underboost)", "Reduced engine power message", "Excessive black smoke"]
     diagnostic_steps:
-      - "Read VGT Vane Position Actual vs Desired (PIDs 11 9B / 11 91)"
+      - "Read VGT Vane Position Actual vs Desired (PIDs 15 43 / 15 40)"
       - "Error > 10% with engine running = vane sticking"
       - "Unison ring inspection requires turbo removal"
     note: "The turbo inlet on LLY is on the driver side, buried under the intake bridge. Access is extremely limited."
@@ -840,52 +840,27 @@ enhanced_ecu_pids_mode_22:
 
   # --- VGT Turbocharger ---
   vgt_turbo:
-    confidence: inferred
-    sources: [GM-ACDELCO-TDS, DIABLOSPORT-TRINITY]
-    source_note: "VGT vane position PIDs are widely referenced in aftermarket tuning but specific addresses need Tech2 verification."
+    confidence: community
+    sources: [SCANGAUGE-XGAUGE-LB7-LLY]
+    source_note: "ScanGauge publishes TXD 6C10F122154301 for actual vane position and 6C10F122154001 for desired vane position."
     description: "Garrett GT3788VA Variable Geometry Turbo. Vane position controls boost."
     pids:
-      - pid: "11 9B"
+      - pid: "15 43"
         name: "VGT Vane Position Actual"
         bytes: 1
         formula: "(A * 100) / 255"
         unit: "%"
+        command_suffix: "01"
         range: { idle: "40-60", full_boost: "10-30" }
         note: "0% = fully open (low restriction, low boost). 100% = fully closed (max boost)."
 
-      - pid: "11 91"
+      - pid: "15 40"
         name: "VGT Vane Position Desired"
         bytes: 1
         formula: "(A * 100) / 255"
         unit: "%"
-
-      - pid: "11 9C"
-        name: "VGT Vane Position Error"
-        bytes: 1
-        formula: "((A - 128) * 100) / 128"
-        unit: "%"
-        range: { normal: "-5 to 5" }
-        threshold:
-          warning_high: 8
-          warning_low: -8
-          critical_high: 15
-        note: "Error > 10% = vane sticking. The #1 LLY reliability issue."
-
-      - pid: "11 15"
-        name: "VGT Duty Cycle / Actuator Command"
-        bytes: 1
-        formula: "(A * 100) / 255"
-        unit: "%"
-
-      - pid: "11 16"
-        name: "Boost Pressure Actual"
-        bytes: 2
-        formula: "((A * 256) + B) / 10"
-        unit: "kPa"
-        range: { idle: "95-103", full_load: "200-270" }
-        note: "Absolute pressure. Subtract barometric for gauge boost (max ~24 PSI stock)."
-        threshold:
-          critical_high: 290
+        command_suffix: "01"
+        note: "Vane error should be computed as actual minus desired until a verified LLY error PID is available."
 
       - pid: "11 17"
         name: "Boost Pressure Desired"
@@ -2190,9 +2165,8 @@ polling_groups:
           - { service: "22", pid: "11 71", name: "Fuel Rail Pressure Desired" }
           - { service: "22", pid: "11 74", name: "Fuel Temperature" }
           - { service: "22", pid: "11 50", name: "Oil Pressure" }
-          - { service: "22", pid: "11 9B", name: "VGT Position Actual" }
-          - { service: "22", pid: "11 91", name: "VGT Position Desired" }
-          - { service: "22", pid: "11 16", name: "Boost Pressure Actual" }
+          - { service: "22", pid: "15 43 01", name: "VGT Position Actual" }
+          - { service: "22", pid: "15 40 01", name: "VGT Position Desired" }
           - { service: "22", pid: "19 86-8D", name: "Injector Balance Rates (all 8)" }
 
   transmission_health:
@@ -2214,16 +2188,11 @@ polling_groups:
     description: "VGT turbo health check — for diagnosing the #1 LLY failure"
     header: "6C 10 F1"
     pids:
-      - { service: "22", pid: "11 9B", name: "VGT Position Actual" }
-      - { service: "22", pid: "11 91", name: "VGT Position Desired" }
-      - { service: "22", pid: "11 9C", name: "VGT Position Error" }
-      - { service: "22", pid: "11 15", name: "VGT Duty Cycle" }
-      - { service: "22", pid: "11 16", name: "Boost Pressure Actual" }
-      - { service: "22", pid: "11 17", name: "Boost Pressure Desired" }
-      - { service: "22", pid: "11 19", name: "Charge Air Cooler Outlet Temp" }
+      - { service: "22", pid: "15 43 01", name: "VGT Position Actual" }
+      - { service: "22", pid: "15 40 01", name: "VGT Position Desired" }
     diagnostic_procedure:
       - "Engine warm (coolant > 80°C), idle in Park"
-      - "Monitor VGT Position Error — should be < ±5% at idle"
+      - "Compute VGT error as actual minus desired — should be < ±5% at idle"
       - "Rev to 2000 RPM and hold 5 seconds"
       - "VGT should move from ~50% to ~20% smoothly"
       - "Error spike > 15% during transition = vane sticking"
@@ -2253,7 +2222,7 @@ known_issues:
     rank: 1
     symptoms: ["P0234", "P0299", "Reduced Engine Power", "Black smoke at WOT", "Sluggish acceleration"]
     root_cause: "Carbon/soot buildup in VGT unison ring restricts vane movement"
-    quick_test: "Monitor VGT Position Error (22 11 9C). Error > 10% under load = sticking."
+    quick_test: "Monitor actual vs desired VGT vane position. Error > 10% under load = sticking."
     fix: "Remove turbo, clean/replace unison ring. Upgraded stainless ring available aftermarket."
 
   ficm_failure:

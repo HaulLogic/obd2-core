@@ -7,8 +7,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_serial::SerialPortBuilderExt;
 use tracing::debug;
 
-use super::Transport;
 use super::ChunkObserver;
+use super::Transport;
 use crate::error::Obd2Error;
 
 /// Serial port transport for ELM327/STN adapters.

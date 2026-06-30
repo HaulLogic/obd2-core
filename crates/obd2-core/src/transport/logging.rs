@@ -3,16 +3,16 @@
 //! Wraps any `Transport` and records all write/read operations to a
 //! human-readable `.obd2raw` text file.
 
-use std::io::{self, Write as IoWrite, BufWriter};
 use std::fs::File;
 use std::fs::OpenOptions;
+use std::io::{self, BufWriter, Write as IoWrite};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use async_trait::async_trait;
 
-use super::{Transport, ChunkObserver};
+use super::{ChunkObserver, Transport};
 use crate::error::Obd2Error;
 
 /// Escape bytes for the log file.
@@ -53,8 +53,7 @@ fn format_header(meta: &CaptureMetadata) -> String {
     } else {
         header.push_str(&format!(
             "# transport={} device={}\n",
-            meta.transport_type,
-            meta.port_or_device,
+            meta.transport_type, meta.port_or_device,
         ));
     }
     header.push_str(&format!(
@@ -92,11 +91,7 @@ impl<T: Transport> LoggingTransport<T> {
     }
 
     /// Start capturing to a file. Writes the header.
-    pub fn start_capture(
-        &mut self,
-        path: &Path,
-        metadata: &CaptureMetadata,
-    ) -> io::Result<()> {
+    pub fn start_capture(&mut self, path: &Path, metadata: &CaptureMetadata) -> io::Result<()> {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
         writer.write_all(format_header(metadata).as_bytes())?;
@@ -356,12 +351,12 @@ pub fn parse_raw_capture(path: &Path) -> io::Result<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
-    use std::collections::VecDeque;
     use crate::adapter::elm327::Elm327Adapter;
     use crate::protocol::pid::Pid;
     use crate::session::Session;
     use crate::transport::mock::MockTransport;
+    use async_trait::async_trait;
+    use std::collections::VecDeque;
     use tempfile::NamedTempFile;
 
     // ── escape_bytes tests ──────────────────────────────────────────────
@@ -455,7 +450,8 @@ mod tests {
                 port_or_device: "test".to_string(),
                 baud_rate: None,
             },
-        ).unwrap();
+        )
+        .unwrap();
 
         // Send ATZ
         lt.write(b"ATZ\r").await.unwrap();
@@ -479,7 +475,11 @@ mod tests {
         assert!(lines[2].starts_with("# started="));
 
         // Data lines (skip header)
-        let data_lines: Vec<&str> = lines.iter().filter(|l| !l.starts_with('#')).copied().collect();
+        let data_lines: Vec<&str> = lines
+            .iter()
+            .filter(|l| !l.starts_with('#'))
+            .copied()
+            .collect();
         assert_eq!(data_lines.len(), 4); // W, R, W, R
 
         assert!(data_lines[0].contains(" W ATZ\\r"));
@@ -533,7 +533,8 @@ mod tests {
                 port_or_device: "test".to_string(),
                 baud_rate: None,
             },
-        ).unwrap();
+        )
+        .unwrap();
 
         lt.write(b"ATZ\r").await.unwrap();
         let _ = lt.read().await.unwrap();
@@ -672,7 +673,8 @@ mod tests {
                 port_or_device: "ttyUSB0".into(),
                 baud_rate: Some(115200),
             },
-        ).unwrap();
+        )
+        .unwrap();
 
         let _ = lt.read().await.unwrap();
         lt.stop_capture().unwrap();
@@ -698,7 +700,8 @@ mod tests {
                 port_or_device: "OBDLink MX+".into(),
                 baud_rate: None,
             },
-        ).unwrap();
+        )
+        .unwrap();
 
         let response = lt.read().await.unwrap();
         lt.stop_capture().unwrap();

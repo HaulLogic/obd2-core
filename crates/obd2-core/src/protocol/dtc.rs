@@ -102,7 +102,7 @@ pub enum DtcCategory {
 }
 
 /// Lifecycle status of a DTC.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DtcStatus {
     Stored,
     Pending,
@@ -466,7 +466,9 @@ mod tests {
     #[test]
     fn test_universal_description_known() {
         assert!(universal_dtc_description("P0420").is_some());
-        assert!(universal_dtc_description("P0300").unwrap().contains("Misfire"));
+        assert!(universal_dtc_description("P0300")
+            .unwrap()
+            .contains("Misfire"));
     }
 
     #[test]

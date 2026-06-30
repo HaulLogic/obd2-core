@@ -18,7 +18,11 @@ pub fn evaluate_pid_threshold(
     let names = pid_threshold_name(pid)?;
 
     // Search engine thresholds first, then transmission
-    for named in thresholds.engine.iter().chain(thresholds.transmission.iter()) {
+    for named in thresholds
+        .engine
+        .iter()
+        .chain(thresholds.transmission.iter())
+    {
         if names.iter().any(|n| named.name == *n) {
             return named.threshold.evaluate(value, pid.name());
         }
@@ -38,7 +42,11 @@ pub fn evaluate_enhanced_threshold(
     // Search by DID hex string as name
     let did_name = format!("{:#06X}", did);
 
-    for named in thresholds.engine.iter().chain(thresholds.transmission.iter()) {
+    for named in thresholds
+        .engine
+        .iter()
+        .chain(thresholds.transmission.iter())
+    {
         if named.name == did_name {
             return named.threshold.evaluate(value, &did_name);
         }

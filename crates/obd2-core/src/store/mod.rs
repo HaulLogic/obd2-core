@@ -12,12 +12,12 @@
 //! - Mobile apps can use platform-native storage (Core Data, Room)
 //! - The library works without any persistence at all
 
-use async_trait::async_trait;
 use crate::error::Obd2Error;
-use crate::protocol::pid::Pid;
-use crate::protocol::enhanced::Reading;
 use crate::protocol::dtc::Dtc;
-use crate::vehicle::{VehicleProfile, ThresholdSet};
+use crate::protocol::enhanced::Reading;
+use crate::protocol::pid::Pid;
+use crate::vehicle::{ThresholdSet, VehicleProfile};
+use async_trait::async_trait;
 
 /// Persist and retrieve vehicle profiles and threshold overrides.
 ///

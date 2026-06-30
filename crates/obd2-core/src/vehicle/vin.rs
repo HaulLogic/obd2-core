@@ -67,7 +67,11 @@ pub fn decode_year_candidates(vin: &str) -> (Option<i32>, Option<i32>) {
 pub fn decode_manufacturer(wmi: &str) -> Option<&'static str> {
     // Match specific 3-char WMIs first, then 2-char prefixes
     let wmi_upper = wmi.to_uppercase();
-    let wmi3 = if wmi_upper.len() >= 3 { &wmi_upper[..3] } else { return None; };
+    let wmi3 = if wmi_upper.len() >= 3 {
+        &wmi_upper[..3]
+    } else {
+        return None;
+    };
 
     match wmi3 {
         // GM
@@ -134,7 +138,9 @@ pub fn decode_manufacturer(wmi: &str) -> Option<&'static str> {
 
 /// Detect vehicle class/type from VIN patterns.
 pub fn detect_truck_class(vin: &str) -> Option<&'static str> {
-    if vin.len() < 17 { return None; }
+    if vin.len() < 17 {
+        return None;
+    }
     let wmi = &vin[..3].to_uppercase();
 
     match wmi.as_str() {
@@ -170,7 +176,12 @@ pub fn decode(vin: &str) -> DecodedVin {
     };
     let truck_class = detect_truck_class(vin).map(String::from);
 
-    DecodedVin { year, year_alt, manufacturer, truck_class }
+    DecodedVin {
+        year,
+        year_alt,
+        manufacturer,
+        truck_class,
+    }
 }
 
 #[cfg(test)]
@@ -236,7 +247,10 @@ mod tests {
 
     #[test]
     fn test_detect_truck_class_diesel() {
-        assert_eq!(detect_truck_class("1GCHK23124F000001"), Some("diesel-truck"));
+        assert_eq!(
+            detect_truck_class("1GCHK23124F000001"),
+            Some("diesel-truck")
+        );
         // 8th digit '2' maps to diesel
     }
 
