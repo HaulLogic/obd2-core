@@ -1334,9 +1334,7 @@ impl<A: Adapter> Session<A> {
 fn sanitize_capture_name(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-        } else if matches!(ch, '-' | '_') {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
             out.push(ch);
         } else {
             out.push('_');

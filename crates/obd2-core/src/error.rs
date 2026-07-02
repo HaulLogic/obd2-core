@@ -30,6 +30,8 @@ pub enum NegativeResponse {
     GeneralProgrammingFailure,
     /// 0x78
     ResponsePending,
+    /// Any NRC not yet modeled by this crate.
+    Unknown(u8),
 }
 
 impl NegativeResponse {
@@ -52,6 +54,10 @@ impl NegativeResponse {
         }
     }
 
+    pub fn from_byte_or_unknown(b: u8) -> Self {
+        Self::from_byte(b).unwrap_or(Self::Unknown(b))
+    }
+
     pub fn code(&self) -> u8 {
         match self {
             Self::GeneralReject => 0x10,
@@ -67,6 +73,7 @@ impl NegativeResponse {
             Self::TimeDelayNotExpired => 0x37,
             Self::GeneralProgrammingFailure => 0x72,
             Self::ResponsePending => 0x78,
+            Self::Unknown(code) => *code,
         }
     }
 }
@@ -172,6 +179,13 @@ mod tests {
     fn test_nrc_code() {
         assert_eq!(NegativeResponse::GeneralReject.code(), 0x10);
         assert_eq!(NegativeResponse::ResponsePending.code(), 0x78);
+    }
+
+    #[test]
+    fn test_nrc_unknown_preserves_code() {
+        let nrc = NegativeResponse::from_byte_or_unknown(0x94);
+        assert_eq!(nrc, NegativeResponse::Unknown(0x94));
+        assert_eq!(nrc.code(), 0x94);
     }
 
     #[test]

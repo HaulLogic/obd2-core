@@ -49,12 +49,7 @@ impl SqliteStore {
     }
 
     fn create_tables(&self) -> Result<(), Obd2Error> {
-        let conn = self.conn.lock().map_err(|e| {
-            Obd2Error::Other(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))
-        })?;
+        let conn = self.conn.lock().map_err(mutex_poison_error)?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS vehicles (
                 vin TEXT PRIMARY KEY,
@@ -105,12 +100,7 @@ impl VehicleStore for SqliteStore {
         let data = serde_json::to_string(&SerializableProfile::from(profile))
             .map_err(|e| Obd2Error::Other(Box::new(e)))?;
 
-        let conn = self.conn.lock().map_err(|e| {
-            Obd2Error::Other(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))
-        })?;
+        let conn = self.conn.lock().map_err(mutex_poison_error)?;
         conn.execute(
             "INSERT OR REPLACE INTO vehicles (vin, data) VALUES (?1, ?2)",
             params![vin, data],
@@ -121,12 +111,7 @@ impl VehicleStore for SqliteStore {
     }
 
     async fn get_vehicle(&self, vin: &str) -> Result<Option<VehicleProfile>, Obd2Error> {
-        let conn = self.conn.lock().map_err(|e| {
-            Obd2Error::Other(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))
-        })?;
+        let conn = self.conn.lock().map_err(mutex_poison_error)?;
         let mut stmt = conn
             .prepare("SELECT data FROM vehicles WHERE vin = ?1")
             .map_err(|e| Obd2Error::Other(Box::new(e)))?;
@@ -150,12 +135,7 @@ impl VehicleStore for SqliteStore {
     async fn save_thresholds(&self, vin: &str, thresholds: &ThresholdSet) -> Result<(), Obd2Error> {
         let data = serde_json::to_string(thresholds).map_err(|e| Obd2Error::Other(Box::new(e)))?;
 
-        let conn = self.conn.lock().map_err(|e| {
-            Obd2Error::Other(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))
-        })?;
+        let conn = self.conn.lock().map_err(mutex_poison_error)?;
         conn.execute(
             "INSERT OR REPLACE INTO thresholds (vin, data) VALUES (?1, ?2)",
             params![vin, data],
@@ -166,12 +146,7 @@ impl VehicleStore for SqliteStore {
     }
 
     async fn get_thresholds(&self, vin: &str) -> Result<Option<ThresholdSet>, Obd2Error> {
-        let conn = self.conn.lock().map_err(|e| {
-            Obd2Error::Other(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))
-        })?;
+        let conn = self.conn.lock().map_err(mutex_poison_error)?;
         let mut stmt = conn
             .prepare("SELECT data FROM thresholds WHERE vin = ?1")
             .map_err(|e| Obd2Error::Other(Box::new(e)))?;
@@ -199,12 +174,7 @@ impl SessionStore for SqliteStore {
         let value = reading.value.as_f64().ok();
         let unit = reading.unit;
 
-        let conn = self.conn.lock().map_err(|e| {
-            Obd2Error::Other(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))
-        })?;
+        let conn = self.conn.lock().map_err(mutex_poison_error)?;
         conn.execute(
             "INSERT INTO readings (vin, pid_code, value, unit) VALUES (?1, ?2, ?3, ?4)",
             params![vin, pid.0, value, unit],
@@ -218,12 +188,7 @@ impl SessionStore for SqliteStore {
         let codes: Vec<&str> = dtcs.iter().map(|d| d.code.as_str()).collect();
         let codes_str = codes.join(",");
 
-        let conn = self.conn.lock().map_err(|e| {
-            Obd2Error::Other(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))
-        })?;
+        let conn = self.conn.lock().map_err(mutex_poison_error)?;
         conn.execute(
             "INSERT INTO dtc_events (vin, dtc_codes) VALUES (?1, ?2)",
             params![vin, codes_str],
@@ -232,6 +197,10 @@ impl SessionStore for SqliteStore {
 
         Ok(())
     }
+}
+
+fn mutex_poison_error(error: impl std::fmt::Display) -> Obd2Error {
+    Obd2Error::Other(Box::new(std::io::Error::other(error.to_string())))
 }
 
 /// Simplified serializable version of VehicleProfile for JSON storage.

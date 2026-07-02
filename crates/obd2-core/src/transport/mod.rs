@@ -7,6 +7,7 @@
 #[cfg(feature = "ble")]
 pub mod ble;
 pub mod framed;
+pub mod isotp;
 pub mod logging;
 pub mod mock;
 #[cfg(feature = "serial")]

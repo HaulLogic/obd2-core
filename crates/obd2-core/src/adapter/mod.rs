@@ -13,11 +13,24 @@ use crate::vehicle::{KLineInit, PhysicalAddress, Protocol};
 use async_trait::async_trait;
 use std::collections::HashSet;
 
+pub mod backend;
 pub mod detect;
 pub mod elm327;
 pub mod elm_codec;
 pub mod elm_transport;
 pub mod mock;
+pub mod native_can;
+pub mod stn;
+
+pub use backend::{
+    BackendCaps, BackendKind, CanFdConfig, CanFilterSet, CanFrameMode, CanIdentifier, CanRouteBus,
+    CanRouteConfig, CanRouteError, CanRouteFilter, CapabilityMismatch, CapabilityMismatchKind,
+    CapabilityRequest, LinkKind, NegotiatedBackend, QuirkFlags, SecondaryBus, TransportKind,
+    ELM327_CLONE_BACKEND_CAPS, ELM327_GENUINE_BACKEND_CAPS, NATIVE_CAN_CLASSICAL_BACKEND_CAPS,
+    NATIVE_CAN_FD_BACKEND_CAPS, STN_BACKEND_CAPS, UNKNOWN_BACKEND_CAPS,
+};
+pub use native_can::{NativeCanBackend, NativeCanDriver, NativeCanRoutePlan};
+pub use stn::{StnBackend, StnCommand, StnProtocolPreset, StnRoutePlan};
 
 /// Physical request target resolved from discovery/profile data.
 #[derive(Debug, Clone)]
