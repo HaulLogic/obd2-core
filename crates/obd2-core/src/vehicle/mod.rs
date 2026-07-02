@@ -105,6 +105,13 @@ pub struct VehicleSpec {
     pub enhanced_pids: Vec<crate::protocol::enhanced::EnhancedPid>,
 }
 
+impl VehicleSpec {
+    /// Look up a DTC within this spec's library only.
+    pub fn lookup_dtc(&self, code: &str) -> Option<&DtcEntry> {
+        self.dtc_library.as_ref().and_then(|lib| lib.lookup(code))
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SpecIdentity {
     pub name: String,
@@ -501,14 +508,38 @@ impl SpecRegistry {
         Ok(count)
     }
 
-    /// Match a spec to a VIN using VinMatcher rules.
+    /// All specs whose VIN matcher accepts this VIN.
+    pub fn match_vin_all(&self, vin: &str) -> Vec<&VehicleSpec> {
+        self.specs
+            .iter()
+            .filter(|s| {
+                s.identity
+                    .vin_match
+                    .as_ref()
+                    .is_some_and(|m| m.matches(vin))
+            })
+            .collect()
+    }
+
+    /// Match a VIN to one unambiguous spec. Returns `None` for zero or multiple matches.
     pub fn match_vin(&self, vin: &str) -> Option<&VehicleSpec> {
-        self.specs.iter().find(|s| {
-            s.identity
+        let mut found = None;
+
+        for spec in &self.specs {
+            if spec
+                .identity
                 .vin_match
                 .as_ref()
                 .is_some_and(|m| m.matches(vin))
-        })
+            {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(spec);
+            }
+        }
+
+        found
     }
 
     /// Match by make, model, and year.
@@ -535,15 +566,9 @@ impl SpecRegistry {
     }
 
     /// Look up a DTC across all loaded spec DTC libraries.
+    #[deprecated(note = "cross-spec bleed; use VehicleSpec::lookup_dtc")]
     pub fn lookup_dtc(&self, code: &str) -> Option<&DtcEntry> {
-        for spec in &self.specs {
-            if let Some(lib) = &spec.dtc_library {
-                if let Some(entry) = lib.lookup(code) {
-                    return Some(entry);
-                }
-            }
-        }
-        None
+        self.specs.iter().find_map(|spec| spec.lookup_dtc(code))
     }
 }
 
@@ -913,17 +938,32 @@ mod tests {
     #[test]
     fn test_embedded_duramax_has_turbo_dtc_enrichment() {
         let registry = SpecRegistry::with_defaults();
+        let spec = &registry.specs()[0];
 
-        let p2563 = registry
-            .lookup_dtc("P2563")
-            .expect("P2563 should be enriched");
+        let p2563 = spec.lookup_dtc("P2563").expect("P2563 should be enriched");
         assert_eq!(p2563.meaning, "Turbo Boost Control Position Sensor Circuit");
         assert_eq!(p2563.severity, crate::protocol::dtc::Severity::High);
 
-        let p003a = registry
-            .lookup_dtc("P003A")
-            .expect("P003A should be enriched");
+        let p003a = spec.lookup_dtc("P003A").expect("P003A should be enriched");
         assert_eq!(p003a.severity, crate::protocol::dtc::Severity::High);
+    }
+
+    #[test]
+    fn vehicle_spec_lookup_dtc_is_scoped_per_spec() {
+        let base = SpecRegistry::with_defaults();
+        let a = base.specs()[0].clone();
+        let mut b = a.clone();
+        let code = a.dtc_library.as_ref().unwrap().ecm[0].code.clone();
+        b.dtc_library.as_mut().unwrap().ecm[0].meaning = "DIFFERENT-OEM-MEANING".to_string();
+
+        assert_ne!(
+            a.lookup_dtc(&code).unwrap().meaning,
+            b.lookup_dtc(&code).unwrap().meaning
+        );
+        assert_eq!(
+            b.lookup_dtc(&code).unwrap().meaning,
+            "DIFFERENT-OEM-MEANING"
+        );
     }
 
     #[test]
@@ -932,6 +972,29 @@ mod tests {
         let matched = registry.match_vin("1GCHK23224F000001");
         assert!(matched.is_some(), "should match Duramax by VIN");
         assert_eq!(matched.unwrap().identity.engine.code, "LLY");
+    }
+
+    #[test]
+    fn match_vin_returns_none_when_two_specs_match_same_vin() {
+        let base = SpecRegistry::with_defaults();
+        let spec = base.specs()[0].clone();
+        let registry = SpecRegistry {
+            specs: vec![spec.clone(), spec],
+        };
+
+        assert!(registry.match_vin("1GCHK23224F000001").is_none());
+        assert_eq!(registry.match_vin_all("1GCHK23224F000001").len(), 2);
+    }
+
+    #[test]
+    fn match_vin_returns_single_unambiguous_match() {
+        let registry = SpecRegistry::with_defaults();
+        let matched = registry.match_vin("1GCHK23224F000001");
+
+        assert_eq!(
+            matched.map(|spec| spec.identity.engine.code.as_str()),
+            Some("LLY")
+        );
     }
 
     #[test]

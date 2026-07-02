@@ -1,5 +1,5 @@
 use obd2_core::transport::serial::SerialTransport;
-use obd2_core::transport::Transport;
+use obd2_core::transport::Link;
 use std::env;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

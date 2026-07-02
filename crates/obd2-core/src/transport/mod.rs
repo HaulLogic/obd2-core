@@ -1,8 +1,8 @@
-//! Transport trait and built-in implementations.
+//! Link trait and built-in transport implementations.
 //!
-//! A transport represents the physical connection to an OBD-II adapter
+//! A link represents the raw byte-level connection to an OBD-II adapter
 //! (serial port, BLE GATT, WiFi socket, etc.). This is an open trait —
-//! anyone can implement it for custom transports.
+//! anyone can implement it for custom byte links.
 
 #[cfg(feature = "ble")]
 pub mod ble;
@@ -24,7 +24,7 @@ use async_trait::async_trait;
 /// Used by LoggingTransport to record transport-level reads.
 pub type ChunkObserver = Arc<Mutex<dyn Fn(&[u8]) + Send>>;
 
-/// Physical connection to an OBD-II adapter.
+/// Raw byte-level connection to an OBD-II adapter.
 ///
 /// Implementors handle the raw byte-level communication over a specific
 /// medium (serial, BLE, WiFi, etc.). The adapter layer builds on top
@@ -33,14 +33,14 @@ pub type ChunkObserver = Arc<Mutex<dyn Fn(&[u8]) + Send>>;
 /// # Example
 ///
 /// ```rust,no_run
-/// use obd2_core::transport::Transport;
+/// use obd2_core::transport::Link;
 /// use obd2_core::error::Obd2Error;
 /// use async_trait::async_trait;
 ///
 /// struct MyTransport;
 ///
 /// #[async_trait]
-/// impl Transport for MyTransport {
+/// impl Link for MyTransport {
 ///     async fn write(&mut self, data: &[u8]) -> Result<(), Obd2Error> { Ok(()) }
 ///     async fn read(&mut self) -> Result<Vec<u8>, Obd2Error> { Ok(vec![]) }
 ///     async fn reset(&mut self) -> Result<(), Obd2Error> { Ok(()) }
@@ -49,7 +49,7 @@ pub type ChunkObserver = Arc<Mutex<dyn Fn(&[u8]) + Send>>;
 /// }
 /// ```
 #[async_trait]
-pub trait Transport: Send + Sync {
+pub trait Link: Send + Sync {
     /// Send raw bytes to the adapter.
     async fn write(&mut self, data: &[u8]) -> Result<(), Obd2Error>;
 

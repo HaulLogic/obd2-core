@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::json;
 
 use obd2_core::adapter::elm327::Elm327Adapter;
-use obd2_core::transport::Transport;
+use obd2_core::transport::Link;
 
 use crate::report::{Report, ReportMeta, TestGroupResult, TestStatus};
 
@@ -213,7 +213,7 @@ fn compare_command(report_a: &str, report_b: &str) -> i32 {
 async fn build_transport(
     transport: TransportArg,
     port: Option<&str>,
-) -> Result<Box<dyn Transport>, String> {
+) -> Result<Box<dyn Link>, String> {
     match transport {
         TransportArg::Usb => {
             let port = port.ok_or_else(|| {

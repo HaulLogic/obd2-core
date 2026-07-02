@@ -12,7 +12,7 @@ use crate::error::Obd2Error;
 use crate::protocol::codec::{self, BusFamily};
 use crate::protocol::pid::Pid;
 use crate::protocol::service::{ServiceRequest, Target};
-use crate::transport::Transport;
+use crate::transport::Link;
 use crate::vehicle::{KLineInit, PhysicalAddress, Protocol};
 use async_trait::async_trait;
 use std::collections::HashSet;
@@ -29,9 +29,9 @@ fn default_adapter_info() -> AdapterInfo {
     }
 }
 
-/// ELM327/STN adapter over any Transport.
+/// ELM327/STN adapter over any Link.
 pub struct Elm327Adapter {
-    transport: Box<dyn Transport>,
+    transport: Box<dyn Link>,
     info: AdapterInfo,
     initialized: bool,
     current_header: Option<String>,
@@ -40,7 +40,7 @@ pub struct Elm327Adapter {
 
 impl Elm327Adapter {
     /// Create a new ELM327 adapter wrapping a transport.
-    pub fn new(transport: Box<dyn Transport>) -> Self {
+    pub fn new(transport: Box<dyn Link>) -> Self {
         Self {
             transport,
             info: default_adapter_info(),
@@ -51,7 +51,7 @@ impl Elm327Adapter {
     }
 
     /// Mutable access to the underlying transport.
-    pub fn transport_mut(&mut self) -> &mut dyn Transport {
+    pub fn transport_mut(&mut self) -> &mut dyn Link {
         &mut *self.transport
     }
 
@@ -698,7 +698,7 @@ impl Adapter for Elm327Adapter {
         std::mem::take(&mut self.events)
     }
 
-    fn transport_mut(&mut self) -> Option<&mut dyn Transport> {
+    fn transport_mut(&mut self) -> Option<&mut dyn Link> {
         Some(&mut *self.transport)
     }
 }

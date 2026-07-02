@@ -8,7 +8,7 @@
 use crate::error::Obd2Error;
 use crate::protocol::pid::Pid;
 use crate::protocol::service::ServiceRequest;
-use crate::transport::Transport;
+use crate::transport::Link;
 use crate::vehicle::{KLineInit, PhysicalAddress, Protocol};
 use async_trait::async_trait;
 use std::collections::HashSet;
@@ -142,7 +142,7 @@ pub trait Adapter: Send {
 
     /// Mutable access to the underlying transport (if any).
     /// Returns None for adapters without a real transport (e.g., MockAdapter).
-    fn transport_mut(&mut self) -> Option<&mut dyn Transport> {
+    fn transport_mut(&mut self) -> Option<&mut dyn Link> {
         None
     }
 }

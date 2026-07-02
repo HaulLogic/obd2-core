@@ -1,6 +1,6 @@
 //! Mock transport for testing.
 
-use super::Transport;
+use super::Link;
 use crate::error::Obd2Error;
 use async_trait::async_trait;
 use std::collections::VecDeque;
@@ -39,7 +39,7 @@ impl Default for MockTransport {
 }
 
 #[async_trait]
-impl Transport for MockTransport {
+impl Link for MockTransport {
     async fn write(&mut self, data: &[u8]) -> Result<(), Obd2Error> {
         let cmd = String::from_utf8_lossy(data).trim().to_string();
         // Find and consume the first matching expectation in sequence.

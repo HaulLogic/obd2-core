@@ -8,7 +8,7 @@ use tokio_serial::SerialPortBuilderExt;
 use tracing::debug;
 
 use super::ChunkObserver;
-use super::Transport;
+use super::Link;
 use crate::error::Obd2Error;
 
 /// Serial port transport for ELM327/STN adapters.
@@ -53,7 +53,7 @@ impl std::fmt::Debug for SerialTransport {
 }
 
 #[async_trait]
-impl Transport for SerialTransport {
+impl Link for SerialTransport {
     async fn write(&mut self, data: &[u8]) -> Result<(), Obd2Error> {
         debug!(port = %self.port_name, data = %String::from_utf8_lossy(data), "serial write");
         self.port

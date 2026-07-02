@@ -1,6 +1,6 @@
 //! Logging transport decorator for raw protocol capture.
 //!
-//! Wraps any `Transport` and records all write/read operations to a
+//! Wraps any `Link` and records all write/read operations to a
 //! human-readable `.obd2raw` text file.
 
 use std::fs::File;
@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 
-use super::{ChunkObserver, Transport};
+use super::{ChunkObserver, Link};
 use crate::error::Obd2Error;
 
 /// Escape bytes for the log file.
@@ -68,9 +68,9 @@ type ChunkBuf = Arc<Mutex<Vec<(f64, Vec<u8>)>>>;
 
 /// A transport decorator that records all wire-level communication.
 ///
-/// Wraps any `Transport` and logs every `write()` and `read()` to a
+/// Wraps any `Link` and logs every `write()` and `read()` to a
 /// `.obd2raw` text file when capture is active. Zero overhead when inactive.
-pub struct LoggingTransport<T: Transport> {
+pub struct LoggingTransport<T: Link> {
     inner: T,
     writer: Option<BufWriter<File>>,
     capture_path: Option<PathBuf>,
@@ -78,7 +78,7 @@ pub struct LoggingTransport<T: Transport> {
     chunk_buf: ChunkBuf,
 }
 
-impl<T: Transport> LoggingTransport<T> {
+impl<T: Link> LoggingTransport<T> {
     /// Wrap a transport. Capture starts inactive.
     pub fn new(inner: T) -> Self {
         Self {
@@ -204,7 +204,7 @@ impl<T: Transport> LoggingTransport<T> {
 }
 
 #[async_trait]
-impl<T: Transport> Transport for LoggingTransport<T> {
+impl<T: Link> Link for LoggingTransport<T> {
     async fn write(&mut self, data: &[u8]) -> Result<(), Obd2Error> {
         self.log_line('W', data);
         self.inner.write(data).await
@@ -628,7 +628,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl Transport for FragmentedTransport {
+    impl Link for FragmentedTransport {
         async fn write(&mut self, _data: &[u8]) -> Result<(), Obd2Error> {
             Ok(())
         }

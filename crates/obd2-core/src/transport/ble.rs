@@ -12,7 +12,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::ChunkObserver;
-use super::Transport;
+use super::Link;
 use crate::error::Obd2Error;
 
 // ── GATT UUIDs ──────────────────────────────────────────────────────────────
@@ -318,7 +318,7 @@ impl std::fmt::Debug for BleTransport {
 }
 
 #[async_trait]
-impl Transport for BleTransport {
+impl Link for BleTransport {
     async fn write(&mut self, data: &[u8]) -> Result<(), Obd2Error> {
         debug!(device = %self.device_name, data = %String::from_utf8_lossy(data), "BLE write");
         // BLE has a max write size (typically 20 bytes for BLE 4.x, 512 for 5.x).
