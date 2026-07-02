@@ -8,8 +8,9 @@ use super::{
     InitializationReport, PhysicalTarget, ProbeAttempt, ProbeResult, ProtocolSelectionSource,
     RoutedRequest,
 };
+use crate::adapter::elm_codec;
 use crate::error::Obd2Error;
-use crate::protocol::codec::{self, BusFamily};
+use crate::protocol::codec::BusFamily;
 use crate::protocol::pid::Pid;
 use crate::protocol::service::{ServiceRequest, Target};
 use crate::transport::Link;
@@ -315,7 +316,7 @@ impl Elm327Adapter {
             _ => 1,
         };
 
-        match codec::decode_elm_response_payload_for_command(
+        match elm_codec::decode_elm_response_payload_for_command(
             &response,
             self.protocol_family(),
             skip,
@@ -658,7 +659,7 @@ impl Adapter for Elm327Adapter {
             let cmd = format!("01{:02X}", base);
             match self.send_command(&cmd).await {
                 Ok(response) => {
-                    if let Ok(data) = codec::decode_elm_response_payload_for_command(
+                    if let Ok(data) = elm_codec::decode_elm_response_payload_for_command(
                         &response,
                         self.protocol_family(),
                         2,
