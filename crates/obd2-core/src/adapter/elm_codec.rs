@@ -191,7 +191,7 @@ fn line_matches_command_echo(line: &str, command: &str) -> bool {
         let Some(expected) = command_bytes.next() else {
             return false;
         };
-        if byte.to_ascii_uppercase() != expected.to_ascii_uppercase() {
+        if !byte.eq_ignore_ascii_case(&expected) {
             return false;
         }
     }

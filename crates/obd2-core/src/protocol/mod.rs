@@ -1,5 +1,6 @@
 //! OBD-II and J1939 protocol types and parsing.
 
+pub mod client;
 pub mod codec;
 pub mod dtc;
 pub mod enhanced;
@@ -8,6 +9,7 @@ pub mod pid;
 pub mod service;
 
 // Re-export key types
+pub use client::{DiagResponse, J1979Client, ProtocolClient, RequestKind};
 pub use codec::{
     decode_can_headers_off, decode_can_headers_on, decode_frame, decode_iso_kline_headers_on,
     decode_j1850_headers_on, BusFamily, CanFrame, CanFrameKind, DecodedFrame, IsoKLineFrame,

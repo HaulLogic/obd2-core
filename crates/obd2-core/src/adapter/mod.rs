@@ -16,6 +16,7 @@ use std::collections::HashSet;
 pub mod detect;
 pub mod elm327;
 pub mod elm_codec;
+pub mod elm_transport;
 pub mod mock;
 
 /// Physical request target resolved from discovery/profile data.

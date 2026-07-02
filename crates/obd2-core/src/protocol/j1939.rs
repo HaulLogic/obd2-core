@@ -7,11 +7,11 @@
 //! - Decoder functions for fleet-critical PGNs (engine, vehicle speed, temps)
 //! - [`J1939Dtc`] type using SPN+FMI format (distinct from OBD-II P-codes)
 //!
-//! ## Usage with ELM327/STN adapters
+//! ## Transport setup
 //!
-//! Most OBD-II adapters support J1939 via CAN 29-bit mode (`AT SP A` for
-//! 29-bit 250 kbps). Use [`Session::read_j1939_pgn`] which handles the
-//! CAN addressing internally via `raw_request()`.
+//! J1939 requests require a transport configured for 29-bit CAN at the
+//! vehicle's bus speed. This module only defines PGNs and payload decoding;
+//! bus selection and request framing stay at the transport/client boundary.
 //!
 //! ## PGN request format
 //!

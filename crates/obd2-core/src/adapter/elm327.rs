@@ -204,7 +204,7 @@ impl Elm327Adapter {
         Ok(())
     }
 
-    fn protocol_family(&self) -> BusFamily {
+    pub(crate) fn protocol_family(&self) -> BusFamily {
         match self.info.protocol {
             Protocol::Can11Bit500
             | Protocol::Can11Bit250
