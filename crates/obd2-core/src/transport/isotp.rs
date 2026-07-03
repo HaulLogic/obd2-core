@@ -15,6 +15,7 @@ const PCI_TYPE_FIRST_FRAME: u8 = 0x1;
 const PCI_TYPE_CONSECUTIVE_FRAME: u8 = 0x2;
 const PCI_TYPE_FLOW_CONTROL: u8 = 0x3;
 const MAX_CLASSIC_ISOTP_PAYLOAD: usize = 4095;
+const MAX_RESPONSE_PENDING_FRAMES: usize = 8;
 
 /// Raw classic CAN data frame used by host-side ISO-TP.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,9 +132,10 @@ pub fn st_min_duration(st_min: u8) -> Result<Duration, Obd2Error> {
     match st_min {
         0x00..=0x7F => Ok(Duration::from_millis(st_min as u64)),
         0xF1..=0xF9 => Ok(Duration::from_micros((st_min as u64 - 0xF0) * 100)),
-        _ => Err(Obd2Error::ParseError(format!(
-            "reserved ISO-TP STmin byte: 0x{st_min:02X}"
-        ))),
+        // Reserved values are invalid on the wire, but aborting here can
+        // strand a multi-frame diagnostic send. Clamp to the longest
+        // millisecond delay so the sender remains conservative.
+        _ => Ok(Duration::from_millis(0x7F)),
     }
 }
 
@@ -428,13 +430,23 @@ impl<T: CanFrameIo> IsoTpTransport<T> {
 
 #[async_trait::async_trait]
 impl<T: CanFrameIo> Transport for IsoTpTransport<T> {
-    async fn exchange(&mut self, req: &TransportRequest) -> Result<Vec<u8>, Obd2Error> {
-        let mut request_pdu = Vec::with_capacity(1 + req.data.len());
-        request_pdu.push(req.service_id);
-        request_pdu.extend_from_slice(&req.data);
-
-        let response_pdu = self.exchange_pdu(&request_pdu).await?;
-        strip_response_for_request(req.service_id, &response_pdu)
+    async fn exchange(&mut self, req: TransportRequest) -> Result<Vec<u8>, Obd2Error> {
+        let service_id = req
+            .service_id()
+            .ok_or_else(|| Obd2Error::ParseError("ISO-TP request PDU is empty".into()))?;
+        self.validate_pdu_len(req.pdu.len())?;
+        self.send_pdu(&req.pdu).await?;
+        let mut response_pdu = self.recv_pdu().await?;
+        for _ in 0..MAX_RESPONSE_PENDING_FRAMES {
+            if !is_response_pending_for(service_id, &response_pdu) {
+                return strip_response_for_request(service_id, &response_pdu);
+            }
+            response_pdu = self.recv_pdu().await?;
+        }
+        if is_response_pending_for(service_id, &response_pdu) {
+            return Err(Obd2Error::Timeout);
+        }
+        strip_response_for_request(service_id, &response_pdu)
     }
 
     fn family(&self) -> BusFamily {
@@ -463,6 +475,10 @@ fn validate_can_frame(frame: &CanDataFrame) -> Result<(), Obd2Error> {
         ));
     }
     Ok(())
+}
+
+fn is_response_pending_for(service_id: u8, response_pdu: &[u8]) -> bool {
+    matches!(response_pdu, [0x7F, echoed, 0x78] if *echoed == service_id)
 }
 
 fn strip_response_for_request(service_id: u8, response_pdu: &[u8]) -> Result<Vec<u8>, Obd2Error> {
@@ -544,10 +560,7 @@ mod tests {
         let mut transport = IsoTpTransport::new(io, config);
 
         let response = transport
-            .exchange(&TransportRequest {
-                service_id: 0x22,
-                data: vec![0xF1, 0x90],
-            })
+            .exchange(TransportRequest::broadcast_diagnostic(0x22, [0xF1, 0x90]))
             .await
             .unwrap();
 
@@ -610,10 +623,7 @@ mod tests {
         let mut transport = IsoTpTransport::new(io, config);
 
         let err = transport
-            .exchange(&TransportRequest {
-                service_id: 0x22,
-                data: vec![0xF1, 0x90],
-            })
+            .exchange(TransportRequest::broadcast_diagnostic(0x22, [0xF1, 0x90]))
             .await
             .unwrap_err();
 
@@ -626,13 +636,33 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn transport_exchange_waits_through_response_pending() {
+        let io = MockCanIo::with_rx(vec![
+            frame(0x7E8, &[0x03, 0x7F, 0x22, 0x78, 0, 0, 0, 0]),
+            frame(0x7E8, &[0x05, 0x62, 0xF1, 0x90, 0x12, 0x34, 0, 0]),
+        ]);
+        let config = IsoTpConfig::new(0x7E0, 0x7E8);
+        let mut transport = IsoTpTransport::new(io, config);
+
+        let response = transport
+            .exchange(TransportRequest::broadcast_diagnostic(0x22, [0xF1, 0x90]))
+            .await
+            .unwrap();
+
+        assert_eq!(response, vec![0xF1, 0x90, 0x12, 0x34]);
+        assert_eq!(
+            transport.io().tx,
+            vec![frame(0x7E0, &[0x03, 0x22, 0xF1, 0x90, 0, 0, 0, 0])]
+        );
+    }
+
     #[test]
     fn st_min_decodes_milliseconds_and_microseconds() {
         assert_eq!(st_min_duration(0x05).unwrap(), Duration::from_millis(5));
         assert_eq!(st_min_duration(0xF3).unwrap(), Duration::from_micros(300));
-        assert!(matches!(
-            st_min_duration(0x80),
-            Err(Obd2Error::ParseError(_))
-        ));
+        assert_eq!(st_min_duration(0x80).unwrap(), Duration::from_millis(127));
+        assert_eq!(st_min_duration(0xF0).unwrap(), Duration::from_millis(127));
+        assert_eq!(st_min_duration(0xFA).unwrap(), Duration::from_millis(127));
     }
 }

@@ -5,6 +5,7 @@ pub mod codec;
 pub mod doip;
 pub mod dtc;
 pub mod enhanced;
+pub(crate) mod hex;
 pub mod j1939;
 pub mod pid;
 pub mod service;

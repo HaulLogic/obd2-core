@@ -19,7 +19,6 @@ pub enum RequestKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagResponse {
-    pub expected_positive_service: u8,
     pub payload: Vec<u8>,
 }
 
@@ -41,23 +40,20 @@ impl<T: Transport> ProtocolClient for J1979Client<T> {
     }
 
     async fn request(&mut self, kind: RequestKind) -> Result<DiagResponse, Obd2Error> {
-        let (service_id, data) = match kind {
-            RequestKind::Mode01Pid(pid) => (0x01, vec![pid]),
-            RequestKind::Did16 { service, did } => (service, did.to_be_bytes().to_vec()),
-            RequestKind::Raw { service, data } => (service, data),
+        let request = match kind {
+            RequestKind::Mode01Pid(pid) => TransportRequest::broadcast_diagnostic(0x01, [pid]),
+            RequestKind::Did16 { service, did } => {
+                TransportRequest::broadcast_diagnostic(service, did.to_be_bytes())
+            }
+            RequestKind::Raw { service, mut data } => {
+                data.insert(0, service);
+                TransportRequest {
+                    target: crate::transport::framed::TransportTarget::Broadcast,
+                    pdu: data,
+                }
+            }
         };
-        let expected_positive_service = service_id.checked_add(0x40).ok_or_else(|| {
-            Obd2Error::ParseError(format!(
-                "service id 0x{service_id:02X} cannot form a positive-response id"
-            ))
-        })?;
-        let payload = self
-            .transport
-            .exchange(&TransportRequest { service_id, data })
-            .await?;
-        Ok(DiagResponse {
-            expected_positive_service,
-            payload,
-        })
+        let payload = self.transport.exchange(request).await?;
+        Ok(DiagResponse { payload })
     }
 }

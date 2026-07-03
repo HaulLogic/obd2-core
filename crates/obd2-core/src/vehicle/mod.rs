@@ -512,12 +512,7 @@ impl SpecRegistry {
     pub fn match_vin_all(&self, vin: &str) -> Vec<&VehicleSpec> {
         self.specs
             .iter()
-            .filter(|s| {
-                s.identity
-                    .vin_match
-                    .as_ref()
-                    .is_some_and(|m| m.matches(vin))
-            })
+            .filter(|spec| spec_matches_vin(spec, vin))
             .collect()
     }
 
@@ -526,12 +521,7 @@ impl SpecRegistry {
         let mut found = None;
 
         for spec in &self.specs {
-            if spec
-                .identity
-                .vin_match
-                .as_ref()
-                .is_some_and(|m| m.matches(vin))
-            {
+            if spec_matches_vin(spec, vin) {
                 if found.is_some() {
                     return None;
                 }
@@ -570,6 +560,13 @@ impl SpecRegistry {
     pub fn lookup_dtc(&self, code: &str) -> Option<&DtcEntry> {
         self.specs.iter().find_map(|spec| spec.lookup_dtc(code))
     }
+}
+
+fn spec_matches_vin(spec: &VehicleSpec, vin: &str) -> bool {
+    spec.identity
+        .vin_match
+        .as_ref()
+        .is_some_and(|matcher| matcher.matches(vin))
 }
 
 #[cfg(test)]

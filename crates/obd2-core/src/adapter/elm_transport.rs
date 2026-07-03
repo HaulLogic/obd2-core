@@ -4,7 +4,7 @@ use crate::adapter::{elm327::Elm327Adapter, Adapter};
 use crate::error::Obd2Error;
 use crate::protocol::codec::BusFamily;
 use crate::protocol::service::{ServiceRequest, Target};
-use crate::transport::framed::{Transport, TransportRequest};
+use crate::transport::framed::{Transport, TransportRequest, TransportTarget};
 
 #[derive(Debug)]
 pub struct ElmTransport {
@@ -19,11 +19,23 @@ impl ElmTransport {
 
 #[async_trait::async_trait]
 impl Transport for ElmTransport {
-    async fn exchange(&mut self, req: &TransportRequest) -> Result<Vec<u8>, Obd2Error> {
+    async fn exchange(&mut self, req: TransportRequest) -> Result<Vec<u8>, Obd2Error> {
+        if req.target != TransportTarget::Broadcast {
+            return Err(Obd2Error::Adapter(
+                "ELM framed transport supports broadcast requests only".into(),
+            ));
+        }
+        let mut pdu = req.pdu;
+        if pdu.is_empty() {
+            return Err(Obd2Error::ParseError(
+                "ELM framed request missing service byte".into(),
+            ));
+        }
+        let service_id = pdu.remove(0);
         self.adapter
             .request(&ServiceRequest {
-                service_id: req.service_id,
-                data: req.data.clone(),
+                service_id,
+                data: pdu,
                 target: Target::Broadcast,
             })
             .await
@@ -67,7 +79,6 @@ mod tests {
         let mut client = J1979Client::new(ElmTransport::new(adapter));
         let resp = client.request(RequestKind::Mode01Pid(0x05)).await.unwrap();
 
-        assert_eq!(resp.expected_positive_service, 0x41);
         assert_eq!(resp.payload, vec![0x7B]);
     }
 }

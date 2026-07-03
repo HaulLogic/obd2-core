@@ -34,21 +34,22 @@ fn protocol_module_is_elm_free_recursively() {
         "protocol/ dir not found or contains no Rust files"
     );
 
-    let needles = [
-        "ELM327",
-        "decode_elm_response_payload",
-        "SEARCHING...",
-        "AT SH",
-    ];
-
     let mut offenders = Vec::new();
     for path in files {
         let src = fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
 
-        for needle in needles {
-            if src.contains(needle) {
-                offenders.push(format!("{}: contains {needle:?}", path.display()));
+        for (line_no, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            let imports_adapter = trimmed.starts_with("use ") && trimmed.contains("adapter::");
+            let directly_refs_adapter =
+                trimmed.contains("crate::adapter::") || trimmed.contains("super::adapter::");
+            if imports_adapter || directly_refs_adapter {
+                offenders.push(format!(
+                    "{}:{}: protocol/ must not depend on adapter paths",
+                    path.display(),
+                    line_no + 1
+                ));
             }
         }
     }

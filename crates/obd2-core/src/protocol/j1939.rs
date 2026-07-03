@@ -425,7 +425,7 @@ impl J1939Request {
     }
 
     pub fn to_frame(self) -> Result<J1939Frame, Obd2Error> {
-        let mut payload = [0xFF; MAX_FRAME_DATA_LEN];
+        let mut payload = [0x00; 3];
         payload[..3].copy_from_slice(&self.requested_pgn.to_le_bytes());
         J1939Frame::from_parts(
             DEFAULT_PRIORITY,
@@ -575,7 +575,7 @@ impl Acknowledgement {
         Ok(Self {
             control: AcknowledgementControl::from_byte(payload[0]),
             group_function_value: payload[1],
-            address_acknowledged: payload[2],
+            address_acknowledged: payload[4],
             pgn: Pgn::from_le_bytes([payload[5], payload[6], payload[7]]),
         })
     }
@@ -584,7 +584,7 @@ impl Acknowledgement {
         let mut payload = [0xFF; 8];
         payload[0] = self.control.as_byte();
         payload[1] = self.group_function_value;
-        payload[2] = self.address_acknowledged;
+        payload[4] = self.address_acknowledged;
         payload[5..8].copy_from_slice(&self.pgn.to_le_bytes());
         payload
     }
@@ -1563,7 +1563,7 @@ fn parse_dm_dtc_message(data: &[u8], label: &str) -> Result<DmDtcMessage, Obd2Er
     }
 
     let chunks = data[2..].chunks_exact(4);
-    if !chunks.remainder().is_empty() && !chunks.remainder().iter().all(|byte| *byte == 0xFF) {
+    if !chunks.remainder().is_empty() && !is_padding_bytes(chunks.remainder()) {
         return Err(Obd2Error::ParseError(format!(
             "{label} DTC payload has {} trailing bytes",
             chunks.remainder().len()
@@ -1572,7 +1572,7 @@ fn parse_dm_dtc_message(data: &[u8], label: &str) -> Result<DmDtcMessage, Obd2Er
 
     let mut dtcs = Vec::new();
     for chunk in chunks {
-        if chunk == [0xFF, 0xFF, 0xFF, 0xFF] {
+        if is_padding_bytes(chunk) {
             continue;
         }
         let dtc = J1939Dtc::from_bytes(chunk).ok_or_else(|| {
@@ -1585,6 +1585,10 @@ fn parse_dm_dtc_message(data: &[u8], label: &str) -> Result<DmDtcMessage, Obd2Er
         lamps: DmLampStatus::parse(data[0], data[1]),
         dtcs,
     })
+}
+
+fn is_padding_bytes(bytes: &[u8]) -> bool {
+    bytes.iter().all(|byte| *byte == 0xFF) || bytes.iter().all(|byte| *byte == 0x00)
 }
 
 fn expect_pgn(message: J1939Message, expected: Pgn) -> Result<Vec<u8>, Obd2Error> {
@@ -2003,10 +2007,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(frame.can_identifier(), 0x18EAFFF9);
-        assert_eq!(
-            frame.payload(),
-            &[0xCA, 0xFE, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
-        );
+        assert_eq!(frame.payload(), &[0xCA, 0xFE, 0x00]);
     }
 
     #[test]
@@ -2089,6 +2090,32 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_dm1_accepts_zero_padding_without_losing_dtcs() {
+        let data = [
+            0x40, 0x00, // MIL on, no flash
+            0xBE, 0x00, 0x02, 0x01, // SPN 190 FMI 2
+            0x00, 0x00, // trailing frame padding from strict-DLC stacks
+        ];
+
+        let message = parse_dm1(&data).unwrap();
+
+        assert_eq!(message.dtcs.len(), 1);
+        assert_eq!(message.dtcs[0].spn, 190);
+        assert_eq!(decode_dm1(&data).len(), 1);
+    }
+
+    #[test]
+    fn test_parse_dm1_rejects_mixed_trailing_bytes() {
+        let data = [
+            0x40, 0x00, // MIL on, no flash
+            0xBE, 0x00, 0x02, 0x01, // SPN 190 FMI 2
+            0x00, 0x7E,
+        ];
+
+        assert!(matches!(parse_dm1(&data), Err(Obd2Error::ParseError(_))));
+    }
+
+    #[test]
     fn test_parse_dm5_readiness() {
         let dm5 = parse_dm5(&[2, 3, 0x13, 0xAA, 0x55, 0x00, 0x12, 0x34]).unwrap();
         assert_eq!(dm5.active_dtc_count, Some(2));
@@ -2135,8 +2162,23 @@ mod tests {
             pgn: Pgn::DM11,
         };
 
-        let parsed = parse_dm11_response(&ack.to_payload()).unwrap();
+        let payload = ack.to_payload();
+        assert_eq!(payload[2], 0xFF);
+        assert_eq!(payload[3], 0xFF);
+        assert_eq!(payload[4], DEFAULT_TOOL_ADDRESS);
+
+        let parsed = parse_dm11_response(&payload).unwrap();
         assert_eq!(parsed, ack);
+    }
+
+    #[test]
+    fn test_acknowledgement_parses_address_from_byte_five() {
+        let payload = [0x00, 0xFF, 0x11, 0x22, 0x80, 0xD3, 0xFE, 0x00];
+
+        let parsed = Acknowledgement::parse(&payload).unwrap();
+
+        assert_eq!(parsed.address_acknowledged, 0x80);
+        assert_eq!(parsed.pgn, Pgn::DM11);
     }
 
     #[derive(Debug)]

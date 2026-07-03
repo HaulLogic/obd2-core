@@ -184,14 +184,15 @@ impl<T: Transport> UdsClient<T> {
         service_id: u8,
         data: impl Into<Vec<u8>>,
     ) -> Result<Vec<u8>, Obd2Error> {
+        let request_data = data.into();
         let payload = self
             .transport
-            .exchange(&TransportRequest {
+            .exchange(TransportRequest::broadcast_diagnostic(
                 service_id,
-                data: data.into(),
-            })
+                &request_data,
+            ))
             .await?;
-        normalize_transport_payload(service_id, payload)
+        normalize_transport_payload(service_id, &request_data, payload)
     }
 
     pub async fn diagnostic_session_control(
@@ -445,21 +446,48 @@ impl<T: Transport> ProtocolClient for UdsClient<T> {
                 )));
             }
         };
-        let expected_positive_service = positive_response_sid(service_id)?;
         let payload = self.request_service(service_id, data).await?;
-        Ok(DiagResponse {
-            expected_positive_service,
-            payload,
-        })
+        Ok(DiagResponse { payload })
     }
 }
 
-fn normalize_transport_payload(service_id: u8, payload: Vec<u8>) -> Result<Vec<u8>, Obd2Error> {
+fn normalize_transport_payload(
+    service_id: u8,
+    request_data: &[u8],
+    payload: Vec<u8>,
+) -> Result<Vec<u8>, Obd2Error> {
     match payload.first().copied() {
         Some(0x7F) => parse_uds_response(service_id, &payload).map(|resp| resp.data.to_vec()),
-        Some(sid) if sid == positive_response_sid(service_id)? => Ok(payload[1..].to_vec()),
+        Some(sid)
+            if sid == positive_response_sid(service_id)?
+                && raw_positive_response_matches_echo(service_id, request_data, &payload[1..]) =>
+        {
+            Ok(payload[1..].to_vec())
+        }
         _ => Ok(payload),
     }
+}
+
+fn raw_positive_response_matches_echo(
+    service_id: u8,
+    request_data: &[u8],
+    response_data: &[u8],
+) -> bool {
+    let echo_len = match service_id {
+        SID_CLEAR_DIAGNOSTIC_INFORMATION => 0,
+        SID_READ_DATA_BY_IDENTIFIER | SID_WRITE_DATA_BY_IDENTIFIER => 2,
+        SID_INPUT_OUTPUT_CONTROL_BY_IDENTIFIER => 2,
+        SID_ROUTINE_CONTROL => 3,
+        _ => 1,
+    };
+
+    if echo_len == 0 {
+        return response_data.is_empty();
+    }
+    if request_data.len() < echo_len {
+        return false;
+    }
+    response_data.starts_with(&request_data[..echo_len])
 }
 
 fn split_required_echo<'a>(
@@ -516,10 +544,7 @@ mod tests {
     impl MockFramedTransport {
         fn expect(&mut self, service_id: u8, data: &[u8], response: &[u8]) {
             self.expectations.push_back((
-                TransportRequest {
-                    service_id,
-                    data: data.to_vec(),
-                },
+                TransportRequest::broadcast_diagnostic(service_id, data),
                 response.to_vec(),
             ));
         }
@@ -531,12 +556,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Transport for MockFramedTransport {
-        async fn exchange(&mut self, req: &TransportRequest) -> Result<Vec<u8>, Obd2Error> {
+        async fn exchange(&mut self, req: TransportRequest) -> Result<Vec<u8>, Obd2Error> {
             let (expected, response) = self
                 .expectations
                 .pop_front()
                 .ok_or_else(|| Obd2Error::Transport("unexpected UDS request".into()))?;
-            assert_eq!(&expected, req);
+            assert_eq!(expected, req);
             Ok(response)
         }
 
@@ -664,5 +689,17 @@ mod tests {
         let mut client = UdsClient::new(transport);
 
         assert_eq!(client.read_obdonuds_identifier().await.unwrap(), vec![0x01]);
+    }
+
+    #[tokio::test]
+    async fn uds_client_does_not_restrip_sid_stripped_payload_with_colliding_did() {
+        let mut transport = MockFramedTransport::default();
+        transport.expect(0x22, &[0x62, 0x10], &[0x62, 0x10, 0xAA]);
+        let mut client = UdsClient::new(transport);
+
+        assert_eq!(
+            client.read_data_by_identifier(0x6210).await.unwrap(),
+            vec![0xAA]
+        );
     }
 }

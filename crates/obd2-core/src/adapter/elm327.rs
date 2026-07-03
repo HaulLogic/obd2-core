@@ -659,15 +659,17 @@ impl Adapter for Elm327Adapter {
             let cmd = format!("01{:02X}", base);
             match self.send_command(&cmd).await {
                 Ok(response) => {
-                    if let Ok(data) = elm_codec::decode_elm_response_payload_for_command(
+                    if let Ok(payloads) = elm_codec::decode_elm_response_payloads_for_command(
                         &response,
                         self.protocol_family(),
                         2,
                         Some(&cmd),
                     ) {
-                        if data.len() >= 4 {
-                            for pid_code in Self::parse_supported_pids(&data[..4], base) {
-                                all_supported.insert(Pid(pid_code));
+                        for data in payloads {
+                            if data.len() >= 4 {
+                                for pid_code in Self::parse_supported_pids(&data[..4], base) {
+                                    all_supported.insert(Pid(pid_code));
+                                }
                             }
                         }
                     } else if Self::check_response_error(&response).is_err() {
@@ -861,6 +863,21 @@ mod tests {
         assert!(pids.contains(&0x05)); // Coolant temp
         assert!(pids.contains(&0x0C)); // RPM
         assert!(pids.contains(&0x0D)); // Speed
+    }
+
+    #[tokio::test]
+    async fn test_elm327_supported_pids_ors_multiple_ecu_responses() {
+        let mut transport = MockTransport::new();
+        setup_init(&mut transport);
+        transport.expect("0100", "41 00 80 00 00 00\r41 00 00 00 00 01\r>");
+        transport.expect("0120", "NO DATA\r>");
+
+        let mut adapter = Elm327Adapter::new(Box::new(transport));
+        adapter.initialize().await.unwrap();
+
+        let pids = adapter.supported_pids().await.unwrap();
+        assert!(pids.contains(&Pid(0x01)));
+        assert!(pids.contains(&Pid(0x20)));
     }
 
     #[tokio::test]
