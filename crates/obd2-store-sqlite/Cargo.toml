@@ -1,6 +1,6 @@
 [package]
 name = "obd2-store-sqlite"
-version = "0.2.0"
+version = "0.3.0-dev"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -10,7 +10,7 @@ keywords = ["obd2", "obd-ii", "diagnostics", "sqlite", "automotive"]
 categories = ["hardware-support"]
 
 [dependencies]
-obd2-core = { version = "0.2.0", path = "../obd2-core", default-features = false }
+obd2-core = { version = "0.3.0-dev", path = "../obd2-core", default-features = false }
 rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { workspace = true }
 async-trait = { workspace = true }
