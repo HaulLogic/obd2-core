@@ -22,6 +22,9 @@ pub struct MockAdapter {
     dtcs: Vec<Dtc>,
     initialized: bool,
     supported: HashSet<Pid>,
+    /// When false (default), J1939 Request-PGN (0xEA) returns NoData so standard
+    /// OBD-II mocks do not falsely prove a heavy-duty bus (Desktop D3 honesty).
+    j1939_enabled: bool,
 }
 
 impl MockAdapter {
@@ -66,7 +69,15 @@ impl MockAdapter {
             dtcs: Vec::new(),
             initialized: false,
             supported,
+            j1939_enabled: false,
         }
+    }
+
+    /// Enable mock J1939 PGN responses (and advertise 29-bit CAN) for HD path tests.
+    pub fn with_j1939_enabled(mut self) -> Self {
+        self.j1939_enabled = true;
+        self.info.protocol = Protocol::Can29Bit250;
+        self
     }
 
     /// Set the DTCs that will be returned by Mode 03 queries.
@@ -284,6 +295,9 @@ impl Adapter for MockAdapter {
 
             // J1939 Request PGN (0xEA)
             0xEA => {
+                if !self.j1939_enabled {
+                    return Err(Obd2Error::NoData);
+                }
                 let pgn = match (req.data.first(), req.data.get(1), req.data.get(2)) {
                     (Some(&lo), Some(&mid), Some(&hi)) => {
                         (lo as u32) | ((mid as u32) << 8) | ((hi as u32) << 16)

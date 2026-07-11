@@ -604,7 +604,7 @@ async fn test_session_evaluate_threshold() {
 async fn test_j1939_read_eec1() {
     use obd2_core::protocol::j1939::{decode_eec1, Pgn};
 
-    let adapter = MockAdapter::new();
+    let adapter = MockAdapter::new().with_j1939_enabled();
     let mut session = Session::new(adapter);
 
     let data = session.read_j1939_pgn(Pgn::EEC1).await.unwrap();
@@ -615,7 +615,7 @@ async fn test_j1939_read_eec1() {
 /// J1939 DTC read through Session
 #[tokio::test]
 async fn test_j1939_read_dtcs() {
-    let adapter = MockAdapter::new();
+    let adapter = MockAdapter::new().with_j1939_enabled();
     let mut session = Session::new(adapter);
 
     let dtcs = session.read_j1939_dtcs().await.unwrap();
@@ -628,7 +628,7 @@ async fn test_j1939_read_dtcs() {
 async fn test_j1939_read_temperatures() {
     use obd2_core::protocol::j1939::{decode_et1, Pgn};
 
-    let adapter = MockAdapter::new();
+    let adapter = MockAdapter::new().with_j1939_enabled();
     let mut session = Session::new(adapter);
 
     let data = session.read_j1939_pgn(Pgn::ET1).await.unwrap();
@@ -642,7 +642,7 @@ async fn test_j1939_read_temperatures() {
 async fn test_j1939_read_pressures() {
     use obd2_core::protocol::j1939::{decode_eflp1, Pgn};
 
-    let adapter = MockAdapter::new();
+    let adapter = MockAdapter::new().with_j1939_enabled();
     let mut session = Session::new(adapter);
 
     let data = session.read_j1939_pgn(Pgn::EFLP1).await.unwrap();
@@ -656,7 +656,7 @@ async fn test_j1939_read_pressures() {
 async fn test_j1939_read_fuel_economy() {
     use obd2_core::protocol::j1939::{decode_lfe, Pgn};
 
-    let adapter = MockAdapter::new();
+    let adapter = MockAdapter::new().with_j1939_enabled();
     let mut session = Session::new(adapter);
 
     let data = session.read_j1939_pgn(Pgn::LFE).await.unwrap();
@@ -669,7 +669,7 @@ async fn test_j1939_read_fuel_economy() {
 async fn test_j1939_read_vehicle_speed() {
     use obd2_core::protocol::j1939::{decode_ccvs, Pgn};
 
-    let adapter = MockAdapter::new();
+    let adapter = MockAdapter::new().with_j1939_enabled();
     let mut session = Session::new(adapter);
 
     let data = session.read_j1939_pgn(Pgn::CCVS).await.unwrap();
