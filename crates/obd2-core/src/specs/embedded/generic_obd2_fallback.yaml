@@ -1,0 +1,68 @@
+# Safe defaults when no family-specific spec matches.
+# Intentionally has NO vin_match so it never steals unique VIN matches.
+
+spec_version: "1.0"
+
+identity:
+  name: "Generic OBD-II fallback"
+  model_years: [1996, 2035]
+  makes:
+    - Generic
+  models:
+    - Unknown
+  engine:
+    code: GENERIC
+    displacement_l: 0.0
+    cylinders: 0
+    layout: unknown
+    aspiration: unknown
+    fuel_type: unknown
+    fuel_system: null
+    compression_ratio: null
+    max_power_kw: null
+    max_torque_nm: null
+    redline_rpm: 6500
+    idle_rpm_warm: 700
+    idle_rpm_cold: 900
+    firing_order: null
+    ecm_hardware: null
+  transmission: null
+  vin_match: null
+
+communication:
+  buses:
+    - id: auto
+      protocol: Auto
+      speed_bps: 0
+      modules: []
+      description: "Adapter auto-detect"
+  elm327_protocol_code: "0"
+
+thresholds:
+  engine:
+    - name: coolant_temp
+      threshold:
+        min: -40.0
+        max: 120.0
+        warning_high: 105.0
+        critical_high: 115.0
+        unit: "\u00B0C"
+    - name: rpm
+      threshold:
+        min: 0.0
+        max: 8000.0
+        warning_high: 5500.0
+        critical_high: 6500.0
+        unit: RPM
+
+polling_groups:
+  - name: critical
+    description: "Minimal ELD Mode 01 set"
+    target_interval_ms: 500
+    steps:
+      - target: broadcast
+        standard_pids: [0x05, 0x0C, 0x0D, 0x42]
+        enhanced_pids: []
+
+enhanced_pids: []
+known_issues: []

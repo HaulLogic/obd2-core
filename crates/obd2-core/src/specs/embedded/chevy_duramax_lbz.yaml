@@ -1,0 +1,96 @@
+# Embedded identity/thresholds: 2006–2007 Duramax LBZ (inferred from LLY platform).
+# ELD path uses standard Mode 01; enhanced DIDs are not graduated here.
+
+spec_version: "1.0"
+
+identity:
+  name: "2006-2007 GM Duramax LBZ"
+  model_years: [2006, 2007]
+  makes:
+    - Chevrolet
+    - GMC
+  models:
+    - Silverado 2500HD
+    - Silverado 3500
+    - Sierra 2500HD
+    - Sierra 3500
+  engine:
+    code: LBZ
+    displacement_l: 6.6
+    cylinders: 8
+    layout: V8
+    aspiration: turbocharged
+    fuel_type: diesel
+    fuel_system: "Bosch common-rail direct injection"
+    compression_ratio: 16.8
+    max_power_kw: 268.0
+    max_torque_nm: 895.0
+    redline_rpm: 3250
+    idle_rpm_warm: 680
+    idle_rpm_cold: 780
+    firing_order: [1, 2, 7, 8, 4, 5, 6, 3]
+    ecm_hardware: "Bosch E60 (LBZ calibration)"
+  transmission:
+    model: "Allison 1000 (6-speed)"
+    transmission_type: !Geared
+      speeds: 6
+      gear_ratios:
+        - ["1st", 3.10]
+        - ["2nd", 1.81]
+        - ["3rd", 1.41]
+        - ["4th", 1.00]
+        - ["5th", 0.71]
+        - ["6th", 0.61]
+    fluid_capacity_l: 13.5
+  vin_match:
+    # LBZ commonly coded as 8th digit 'D' on GMT900 transition years (community).
+    vin_8th_digit: ['D']
+    wmi_prefixes:
+      - "1GC"
+      - "1GT"
+      - "2GC"
+    year_range: [2006, 2007]
+
+communication:
+  buses:
+    - id: can11
+      protocol: Can11Bit500
+      speed_bps: 500000
+      modules:
+        - id: ecm
+          name: "Engine Control Module"
+          address: !Can11Bit
+            request_id: 0x7E0
+            response_id: 0x7E8
+          bus: can11
+      description: "Standard OBD-II CAN (inferred LBZ era)"
+  elm327_protocol_code: "6"
+
+thresholds:
+  engine:
+    - name: coolant_temp
+      threshold:
+        min: -40.0
+        max: 120.0
+        warning_high: 98.0
+        critical_high: 108.0
+        unit: "\u00B0C"
+    - name: rpm
+      threshold:
+        min: 0.0
+        max: 3500.0
+        warning_high: 2800.0
+        critical_high: 3200.0
+        unit: RPM
+
+polling_groups:
+  - name: critical
+    description: "ELD-critical Mode 01"
+    target_interval_ms: 500
+    steps:
+      - target: broadcast
+        standard_pids: [0x05, 0x0C, 0x0D]
+        enhanced_pids: []
+
+enhanced_pids: []
+known_issues: []

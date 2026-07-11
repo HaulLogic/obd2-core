@@ -1,0 +1,81 @@
+# Class A4 identity scaffold — Cummins 6.7 (Ram HD).
+# Confidence: inferred placeholders; verify before product alerts.
+
+spec_version: "1.0"
+
+identity:
+  name: "Ram HD Cummins 6.7"
+  model_years: [2013, 2025]
+  makes:
+    - Ram
+    - Dodge
+  models:
+    - 2500
+    - 3500
+  engine:
+    code: CUMMINS67
+    displacement_l: 6.7
+    cylinders: 6
+    layout: I6
+    aspiration: turbocharged
+    fuel_type: diesel
+    fuel_system: "High-pressure common-rail"
+    compression_ratio: null
+    max_power_kw: null
+    max_torque_nm: null
+    redline_rpm: 3400
+    idle_rpm_warm: 700
+    idle_rpm_cold: 850
+    firing_order: null
+    ecm_hardware: null
+  transmission: null
+  vin_match:
+    wmi_prefixes:
+      - "3C6"
+      - "3D7"
+      - "1C6"
+    year_range: [2013, 2025]
+
+communication:
+  buses:
+    - id: can11
+      protocol: Can11Bit500
+      speed_bps: 500000
+      modules:
+        - id: ecm
+          name: "ECM"
+          address: !Can11Bit
+            request_id: 0x7E0
+            response_id: 0x7E8
+          bus: can11
+      description: "ISO 15765-4 CAN"
+  elm327_protocol_code: "6"
+
+thresholds:
+  engine:
+    - name: coolant_temp
+      threshold:
+        min: -40.0
+        max: 120.0
+        warning_high: 100.0
+        critical_high: 110.0
+        unit: "\u00B0C"
+    - name: rpm
+      threshold:
+        min: 0.0
+        max: 4000.0
+        warning_high: 2900.0
+        critical_high: 3400.0
+        unit: RPM
+
+polling_groups:
+  - name: critical
+    description: "ELD-critical Mode 01"
+    target_interval_ms: 500
+    steps:
+      - target: broadcast
+        standard_pids: [0x05, 0x0C, 0x0D]
+        enhanced_pids: []
+
+enhanced_pids: []
+known_issues: []
