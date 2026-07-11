@@ -39,10 +39,13 @@ while IFS= read -r line || [[ -n "${line:-}" ]]; do
     if is_allowed "$token"; then
       continue
     fi
-    # Hex payload lines in synthetic fixtures
-    case "$line" in
-      *payload_hex*|*raw_hex*) continue ;;
-    esac
+    # Hex payload lines in synthetic fixtures: exempt only tokens that are
+    # themselves pure hex — a VIN with letters outside A-F still fails here.
+    if [[ "$token" =~ ^[0-9A-F]{17}$ ]]; then
+      case "$line" in
+        *payload_hex*|*raw_hex*) continue ;;
+      esac
+    fi
     echo "FORBIDDEN VIN-like token (not on allowlist): $token"
     echo "  at: $line"
     fail=1
