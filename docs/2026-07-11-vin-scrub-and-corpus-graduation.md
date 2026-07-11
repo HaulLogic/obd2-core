@@ -13,7 +13,7 @@ Real captures under `obd2-dash/raw-captures/` embed **production VINs in filenam
 
 | Field | Rule |
 | --- | --- |
-| VIN string (17 chars) | Replace with stable fake `1GTESTVINTEST00001` (or other valid-length test VIN) |
+| VIN string (17 chars) | Replace with stable fake `1GTESTVNTEST00001` (must be exactly 17 chars) |
 | Filenames | Remove real VIN prefix; use archetype + date, e.g. `a1-duramax-2004-j1850-20260627.obd2raw` |
 | Session JSON metadata | Scrub any `vin` keys |
 | ELM payload Mode 09 | Rewrite VIN ASCII bytes to the same fake VIN (same length) |
