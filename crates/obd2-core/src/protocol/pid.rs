@@ -85,6 +85,10 @@ impl Pid {
     pub const ACTUAL_TORQUE: Pid = Pid(0x62);
     pub const REFERENCE_TORQUE: Pid = Pid(0x63);
 
+    /// Total vehicle distance (odometer) — Mode 01 PID 0xA6 (when supported).
+    /// Resolution 0.1 km; 4 data bytes. Prefer over 0x21/0x31 for compliance odometer.
+    pub const TOTAL_VEHICLE_DISTANCE: Pid = Pid(0xA6);
+
     /// Human-readable name for this PID.
     pub fn name(&self) -> &'static str {
         match self.0 {
@@ -107,6 +111,7 @@ impl Pid {
             0x11 => "Throttle Position",
             0x1C => "OBD Standard",
             0x1F => "Run Time Since Start",
+            0xA6 => "Total Vehicle Distance",
             0x20 => "Supported PIDs [21-40]",
             0x21 => "Distance with MIL On",
             0x23 => "Fuel Rail Gauge Pressure",
@@ -168,7 +173,7 @@ impl Pid {
             0x0E => "\u{00B0}",
             0x10 => "g/s",
             0x1F => "s",
-            0x21 | 0x31 => "km",
+            0x21 | 0x31 | 0xA6 => "km",
             0x30 => "count",
             0x42 => "V",
             0x44 => "\u{03BB}",
@@ -181,7 +186,7 @@ impl Pid {
     /// Number of response data bytes expected for this PID.
     pub fn response_bytes(&self) -> u8 {
         match self.0 {
-            0x00 | 0x01 | 0x20 | 0x40 | 0x60 => 4, // bitmaps
+            0x00 | 0x01 | 0x20 | 0x40 | 0x60 | 0xA6 => 4, // bitmaps / total distance
             0x0C
             | 0x10
             | 0x1F
@@ -261,6 +266,7 @@ impl Pid {
             Self::DEMANDED_TORQUE,
             Self::ACTUAL_TORQUE,
             Self::REFERENCE_TORQUE,
+            Self::TOTAL_VEHICLE_DISTANCE,
         ]
     }
 
@@ -349,6 +355,12 @@ impl Pid {
 
             // Run time / distance: 256*A + B (seconds or km)
             0x1F | 0x21 | 0x31 => Ok(Value::Scalar(256.0 * a + b)),
+
+            // Total vehicle distance (odometer): ((A<<24)|(B<<16)|(C<<8)|D) / 10 km
+            0xA6 => {
+                let raw = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+                Ok(Value::Scalar(raw as f64 / 10.0))
+            }
 
             // Fuel rail gauge pressure: (256*A + B) * 10
             0x23 => Ok(Value::Scalar((256.0 * a + b) * 10.0)),
@@ -549,6 +561,16 @@ mod tests {
         let data = [0xAF]; // 175 - 125 = 50%
         let val = Pid::ACTUAL_TORQUE.parse(&data).unwrap();
         assert_eq!(val.as_f64().unwrap(), 50.0);
+    }
+
+    #[test]
+    fn test_parse_total_vehicle_distance() {
+        // 1_000_000 * 0.1 = 100_000.0 km
+        let data = 1_000_000u32.to_be_bytes();
+        let val = Pid::TOTAL_VEHICLE_DISTANCE.parse(&data).unwrap();
+        assert!((val.as_f64().unwrap() - 100_000.0).abs() < 0.01);
+        assert_eq!(Pid::TOTAL_VEHICLE_DISTANCE.response_bytes(), 4);
+        assert_eq!(Pid::TOTAL_VEHICLE_DISTANCE.unit(), "km");
     }
 
     #[test]
