@@ -1,0 +1,10 @@
+{
+  "id": "synthetic-ccvs-speed-26",
+  "description": "Golden CCVS payload (no VIN)",
+  "pgn": 65265,
+  "pgn_name": "CCVS",
+  "payload_hex": "00001a0000000000",
+  "expected": {
+    "vehicle_speed_kmh": 26.0
+  }
+}

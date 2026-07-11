@@ -1,0 +1,11 @@
+{
+  "id": "synthetic-et1-coolant-50",
+  "description": "Golden ET1 payload (no VIN)",
+  "pgn": 65262,
+  "pgn_name": "ET1",
+  "payload_hex": "5a3c0000ffffffff",
+  "expected": {
+    "coolant_temp_c": 50.0,
+    "fuel_temp_c": 20.0
+  }
+}

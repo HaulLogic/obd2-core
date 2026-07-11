@@ -41,18 +41,18 @@ Large partner archives stay in **private** dash workspaces or offline store unti
 
 ## Scrub script (reference)
 
+Prefer the repo helper (reads `REAL_VIN` from the environment only):
+
 ```bash
-# From a private copy of captures (not committed until scrubbed):
-# Set REAL_VIN from the private capture source — never write the real VIN
-# into this repo, including this doc.
-REAL_VIN='<real VIN from private capture source>'
-FAKE_VIN='1GTESTVNTEST00001'
-find . -type f \( -name '*.obd2raw' -o -name '*.obd2rec' -o -name '*.json' \) -print0 \
-  | xargs -0 perl -pi -e "s/\Q$REAL_VIN\E/$FAKE_VIN/g"
-# Rename files
-for f in *${REAL_VIN}*; do
-  mv -- "$f" "${f//$REAL_VIN/a1-duramax-scrubbed}"
-done
+# From a private machine, with a private source tree (never commit SRC):
+REAL_VIN='…from private source…' FAKE_VIN='1GTESTVNTEST00001' \
+  ./scripts/scrub-captures.sh /path/to/private/captures /path/to/scrubbed/out
+```
+
+Public stop-ship scan (CI + pre-push):
+
+```bash
+./scripts/vin-scan.sh
 ```
 
 ## Known A1 source (do not commit unscrubbed)
