@@ -1,0 +1,12 @@
+{
+  "id": "synthetic-eec1-rpm-680",
+  "description": "Golden EEC1 payload for decode regression (no VIN, no partner data)",
+  "pgn": 61444,
+  "pgn_name": "EEC1",
+  "payload_hex": "009b9b4015ffffff",
+  "expected": {
+    "engine_rpm": 680.0,
+    "actual_torque_pct": 30.0,
+    "driver_demand_torque_pct": 30.0
+  }
+}

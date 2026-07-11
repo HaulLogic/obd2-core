@@ -1,9 +1,8 @@
-# Raw captures (scrubbed fixtures only)
+# Raw captures (scrubbed / synthetic fixtures only)
 
-**Empty by design until graduated.**
-
-- See `docs/2026-07-11-vin-scrub-and-corpus-graduation.md` before committing anything here.
+- See `docs/2026-07-11-vin-scrub-and-corpus-graduation.md` before committing partner data.
 - **Never** commit unscrubbed partner captures or real VINs.
-- Prefer small golden fixtures under `fixtures/` once scrubbed and CI-wired.
+- `fixtures/synthetic/` — identity-free golden payloads wired to CI (`synthetic_corpus` test).
+- Partner A1 graduation still requires scrubbing private `obd2-dash` captures first.
 
 Live multi-MB captures currently live in private `obd2-dash` workspaces.
