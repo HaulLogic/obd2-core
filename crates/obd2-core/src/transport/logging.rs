@@ -43,12 +43,10 @@ pub struct CaptureMetadata {
 /// Format the file header comment lines.
 fn format_header(meta: &CaptureMetadata) -> String {
     let mut header = String::from("# obd2-raw v1\n");
-    if meta.baud_rate.is_some() {
+    if let Some(baud_rate) = meta.baud_rate {
         header.push_str(&format!(
             "# transport={} port={} baud={}\n",
-            meta.transport_type,
-            meta.port_or_device,
-            meta.baud_rate.unwrap(),
+            meta.transport_type, meta.port_or_device, baud_rate,
         ));
     } else {
         header.push_str(&format!(

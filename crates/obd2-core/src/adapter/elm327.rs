@@ -654,29 +654,36 @@ impl Adapter for Elm327Adapter {
     async fn supported_pids(&mut self) -> Result<HashSet<Pid>, Obd2Error> {
         let mut all_supported = HashSet::new();
 
-        // Query PID 0x00, 0x20, 0x40, 0x60
-        for base in [0x00u8, 0x20, 0x40, 0x60] {
+        // Follow only pages claimed by the continuation bit. Four pages cover
+        // the standard Mode 01 bitmap range exposed by this adapter.
+        let bases = [0x00u8, 0x20, 0x40, 0x60];
+        for (index, base) in bases.iter().copied().enumerate() {
             let cmd = format!("01{:02X}", base);
-            match self.send_command(&cmd).await {
-                Ok(response) => {
-                    if let Ok(payloads) = elm_codec::decode_elm_response_payloads_for_command(
-                        &response,
-                        self.protocol_family(),
-                        2,
-                        Some(&cmd),
-                    ) {
-                        for data in payloads {
-                            if data.len() >= 4 {
-                                for pid_code in Self::parse_supported_pids(&data[..4], base) {
-                                    all_supported.insert(Pid(pid_code));
-                                }
-                            }
-                        }
-                    } else if Self::check_response_error(&response).is_err() {
-                        break; // No more supported PIDs
-                    }
+            let response = self.send_command(&cmd).await?;
+            Self::check_response_error(&response)?;
+            let payloads = elm_codec::decode_elm_response_payloads_for_command(
+                &response,
+                self.protocol_family(),
+                2,
+                Some(&cmd),
+            )?;
+
+            let mut continuation = false;
+            for data in payloads {
+                if data.len() < 4 {
+                    return Err(Obd2Error::ParseError(format!(
+                        "supported PID bitmap for {cmd} has {} bytes, expected 4",
+                        data.len()
+                    )));
                 }
-                Err(_) => break,
+                continuation |= data[3] & 0x01 != 0;
+                for pid_code in Self::parse_supported_pids(&data[..4], base) {
+                    all_supported.insert(Pid(pid_code));
+                }
+            }
+
+            if !continuation || index + 1 == bases.len() {
+                break;
             }
         }
 
@@ -869,8 +876,8 @@ mod tests {
     async fn test_elm327_supported_pids_ors_multiple_ecu_responses() {
         let mut transport = MockTransport::new();
         setup_init(&mut transport);
-        transport.expect("0100", "41 00 80 00 00 00\r41 00 00 00 00 01\r>");
-        transport.expect("0120", "NO DATA\r>");
+        transport.expect("0100", "41 00 80 00 00 01\r41 00 00 00 00 01\r>");
+        transport.expect("0120", "41 20 00 00 00 00\r>");
 
         let mut adapter = Elm327Adapter::new(Box::new(transport));
         adapter.initialize().await.unwrap();
@@ -878,6 +885,50 @@ mod tests {
         let pids = adapter.supported_pids().await.unwrap();
         assert!(pids.contains(&Pid(0x01)));
         assert!(pids.contains(&Pid(0x20)));
+    }
+
+    #[tokio::test]
+    async fn test_elm327_supported_pids_stops_when_continuation_is_clear() {
+        let mut transport = MockTransport::new();
+        setup_init(&mut transport);
+        transport.expect("0100", "41 00 80 00 00 00\r>");
+
+        let mut adapter = Elm327Adapter::new(Box::new(transport));
+        adapter.initialize().await.unwrap();
+
+        let pids = adapter.supported_pids().await.unwrap();
+        assert!(pids.contains(&Pid(0x01)));
+    }
+
+    #[tokio::test]
+    async fn test_elm327_supported_pids_propagates_first_page_no_data() {
+        let mut transport = MockTransport::new();
+        setup_init(&mut transport);
+        transport.expect("0100", "NO DATA\r>");
+
+        let mut adapter = Elm327Adapter::new(Box::new(transport));
+        adapter.initialize().await.unwrap();
+
+        assert!(matches!(
+            adapter.supported_pids().await,
+            Err(Obd2Error::NoData)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_elm327_supported_pids_propagates_claimed_continuation_error() {
+        let mut transport = MockTransport::new();
+        setup_init(&mut transport);
+        transport.expect("0100", "41 00 80 00 00 01\r>");
+        transport.expect("0120", "NO DATA\r>");
+
+        let mut adapter = Elm327Adapter::new(Box::new(transport));
+        adapter.initialize().await.unwrap();
+
+        assert!(matches!(
+            adapter.supported_pids().await,
+            Err(Obd2Error::NoData)
+        ));
     }
 
     #[tokio::test]

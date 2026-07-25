@@ -279,8 +279,31 @@ impl<A: Adapter> Session<A> {
         if let Some(cached) = &self.supported_pids_cache {
             return Ok(cached.clone());
         }
-        let pids = self.query_supported_pids().await?;
+        self.refresh_supported_pids().await
+    }
+
+    /// Force a fresh supported-PID scan, bypassing the session cache.
+    ///
+    /// The cache and vehicle profile are replaced only after the adapter
+    /// reports a complete successful scan.
+    pub async fn refresh_supported_pids(&mut self) -> Result<HashSet<Pid>, Obd2Error> {
+        self.ensure_initialized().await?;
+        if self.request_in_flight {
+            return Err(Obd2Error::AdapterBusy);
+        }
+
+        self.request_in_flight = true;
+        let result = self.adapter.supported_pids().await;
+        let events = self.adapter.drain_events();
+        self.request_in_flight = false;
+        self.apply_adapter_events(&events);
+
+        let pids = result?;
         self.supported_pids_cache = Some(pids.clone());
+        if let Some(profile) = &mut self.profile {
+            profile.supported_pids = pids.clone();
+        }
+        self.refresh_discovery_profile();
         Ok(pids)
     }
 
@@ -474,35 +497,40 @@ impl<A: Adapter> Session<A> {
     /// Populates the VehicleProfile with:
     /// - Offline VIN decode (manufacturer, year, vehicle class)
     /// - Matched vehicle spec (if any)
-    /// - Supported standard PIDs
-    pub async fn identify_vehicle(&mut self) -> Result<VehicleProfile, Obd2Error> {
+    /// - Supported standard PIDs (when using [`Self::identify_vehicle`])
+    pub async fn identify_vehicle_identity(&mut self) -> Result<VehicleProfile, Obd2Error> {
         self.ensure_initialized().await?;
         let vin = self.read_vin().await?;
         self.rename_raw_capture_for_vin(&vin);
-        let supported = self.supported_pids().await.unwrap_or_default();
 
-        // Decode VIN offline — manufacturer, year, vehicle class
         let decoded = crate::vehicle::vin::decode(&vin);
-
-        // Match spec by VIN
         let spec = self.specs.match_vin(&vin).cloned();
-
+        let supported_pids = self.supported_pids_cache.clone().unwrap_or_default();
         let profile = VehicleProfile {
             vin: vin.clone(),
             decoded_vin: Some(decoded),
             info: Some(VehicleInfo {
-                vin: vin.clone(),
+                vin,
                 calibration_ids: vec![],
                 cvns: vec![],
                 ecu_name: None,
             }),
             spec,
-            supported_pids: supported,
+            supported_pids,
         };
 
         self.profile = Some(profile.clone());
         self.refresh_discovery_profile();
         Ok(profile)
+    }
+
+    /// Identify the vehicle and force a complete supported-PID scan.
+    pub async fn identify_vehicle(&mut self) -> Result<VehicleProfile, Obd2Error> {
+        self.identify_vehicle_identity().await?;
+        self.refresh_supported_pids().await?;
+        self.profile
+            .clone()
+            .ok_or_else(|| Obd2Error::Adapter("vehicle profile missing after identity scan".into()))
     }
 
     /// Read freeze frame data for a PID and frame index.
@@ -843,7 +871,7 @@ impl<A: Adapter> Session<A> {
         let key = key_fn(&seed);
         let key_req = ServiceRequest {
             service_id: 0x27,
-            data: std::iter::once(0x02).chain(key.into_iter()).collect(),
+            data: std::iter::once(0x02).chain(key).collect(),
             target: Target::Module(module.0.clone()),
         };
         self.send_request(&key_req).await?;
@@ -1150,26 +1178,6 @@ impl<A: Adapter> Session<A> {
         }
     }
 
-    async fn query_supported_pids(&mut self) -> Result<HashSet<Pid>, Obd2Error> {
-        let mut all_supported = HashSet::new();
-
-        for base in [0x00u8, 0x20, 0x40, 0x60] {
-            let req = ServiceRequest::read_pid(Pid(base));
-            match self.send_request(&req).await {
-                Ok(data) if data.len() >= 4 => {
-                    for pid_code in Self::parse_supported_pid_bitmap(&data, base) {
-                        all_supported.insert(Pid(pid_code));
-                    }
-                }
-                Ok(_) => break,
-                Err(Obd2Error::NoData) => break,
-                Err(e) => return Err(e),
-            }
-        }
-
-        Ok(all_supported)
-    }
-
     async fn send_request(&mut self, req: &ServiceRequest) -> Result<Vec<u8>, Obd2Error> {
         if self.request_in_flight {
             return Err(Obd2Error::AdapterBusy);
@@ -1276,18 +1284,6 @@ impl<A: Adapter> Session<A> {
         }
     }
 
-    fn parse_supported_pid_bitmap(data: &[u8], base_pid: u8) -> Vec<u8> {
-        let mut pids = Vec::new();
-        for (byte_idx, &byte) in data.iter().take(4).enumerate() {
-            for bit in 0..8 {
-                if byte & (0x80 >> bit) != 0 {
-                    pids.push(base_pid + (byte_idx as u8 * 8) + bit + 1);
-                }
-            }
-        }
-        pids
-    }
-
     fn record_visible_target(&mut self, target: &PhysicalTarget) {
         let (id, address) = match target {
             PhysicalTarget::Broadcast => return,
@@ -1389,6 +1385,71 @@ mod tests {
         VehicleSpec, VinMatcher,
     };
     use std::collections::HashMap;
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    };
+
+    struct CountingAdapter {
+        inner: MockAdapter,
+        supported_calls: Arc<AtomicUsize>,
+        fail_supported: Arc<AtomicBool>,
+    }
+
+    impl CountingAdapter {
+        fn new() -> (Self, Arc<AtomicUsize>, Arc<AtomicBool>) {
+            let supported_calls = Arc::new(AtomicUsize::new(0));
+            let fail_supported = Arc::new(AtomicBool::new(false));
+            (
+                Self {
+                    inner: MockAdapter::with_vin("1GCHK23224F000001"),
+                    supported_calls: supported_calls.clone(),
+                    fail_supported: fail_supported.clone(),
+                },
+                supported_calls,
+                fail_supported,
+            )
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Adapter for CountingAdapter {
+        async fn initialize(&mut self) -> Result<InitializationReport, Obd2Error> {
+            self.inner.initialize().await
+        }
+
+        async fn request(&mut self, req: &ServiceRequest) -> Result<Vec<u8>, Obd2Error> {
+            self.inner.request(req).await
+        }
+
+        async fn routed_request(&mut self, req: &RoutedRequest) -> Result<Vec<u8>, Obd2Error> {
+            self.inner.routed_request(req).await
+        }
+
+        async fn supported_pids(&mut self) -> Result<HashSet<Pid>, Obd2Error> {
+            self.supported_calls.fetch_add(1, Ordering::SeqCst);
+            if self.fail_supported.load(Ordering::SeqCst) {
+                return Err(Obd2Error::NoData);
+            }
+            self.inner.supported_pids().await
+        }
+
+        async fn battery_voltage(&mut self) -> Result<Option<f64>, Obd2Error> {
+            self.inner.battery_voltage().await
+        }
+
+        fn info(&self) -> &crate::adapter::AdapterInfo {
+            self.inner.info()
+        }
+
+        fn drain_events(&mut self) -> Vec<AdapterEvent> {
+            self.inner.drain_events()
+        }
+
+        fn transport_mut(&mut self) -> Option<&mut dyn crate::transport::Link> {
+            self.inner.transport_mut()
+        }
+    }
 
     fn test_spec_with_modules() -> VehicleSpec {
         VehicleSpec {
@@ -1545,6 +1606,61 @@ mod tests {
         let pids1 = session.supported_pids().await.unwrap();
         let pids2 = session.supported_pids().await.unwrap();
         assert_eq!(pids1, pids2); // Second call uses cache
+    }
+
+    #[tokio::test]
+    async fn test_identity_only_does_not_query_supported_pids() {
+        let (adapter, supported_calls, _) = CountingAdapter::new();
+        let mut session = Session::new(adapter);
+        session.initialize().await.unwrap();
+
+        let profile = session.identify_vehicle_identity().await.unwrap();
+        assert!(profile.supported_pids.is_empty());
+        assert_eq!(supported_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_identify_vehicle_propagates_supported_pid_failure() {
+        let (adapter, supported_calls, fail_supported) = CountingAdapter::new();
+        fail_supported.store(true, Ordering::SeqCst);
+        let mut session = Session::new(adapter);
+        session.initialize().await.unwrap();
+
+        assert!(matches!(
+            session.identify_vehicle().await,
+            Err(Obd2Error::NoData)
+        ));
+        assert_eq!(supported_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_refresh_supported_pids_bypasses_cache() {
+        let (adapter, supported_calls, _) = CountingAdapter::new();
+        let mut session = Session::new(adapter);
+        session.initialize().await.unwrap();
+
+        session.supported_pids().await.unwrap();
+        session.supported_pids().await.unwrap();
+        assert_eq!(supported_calls.load(Ordering::SeqCst), 1);
+
+        session.refresh_supported_pids().await.unwrap();
+        assert_eq!(supported_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_failed_refresh_does_not_replace_cached_supported_pids() {
+        let (adapter, supported_calls, fail_supported) = CountingAdapter::new();
+        let mut session = Session::new(adapter);
+        session.initialize().await.unwrap();
+
+        let cached = session.supported_pids().await.unwrap();
+        fail_supported.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            session.refresh_supported_pids().await,
+            Err(Obd2Error::NoData)
+        ));
+        assert_eq!(session.supported_pids().await.unwrap(), cached);
+        assert_eq!(supported_calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
@@ -1741,6 +1857,7 @@ mod tests {
             "49 02 01 31 47 43 48 4B 32 33 32 32 34 46 30 30 30 30 30 31\r>",
         );
         transport.expect("0100", "41 00 BE 3E B8 11\r>");
+        transport.expect("0120", "41 20 00 00 00 00\r>");
 
         let adapter = Elm327Adapter::new(Box::new(LoggingTransport::new(transport)));
         let mut session = Session::new(adapter);
