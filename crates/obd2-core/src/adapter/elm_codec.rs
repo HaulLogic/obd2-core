@@ -22,6 +22,9 @@ pub fn decode_elm_response_payload_for_command(
 ) -> Result<Vec<u8>, Obd2Error> {
     let mut payloads =
         decode_elm_response_payloads_for_command(response, family, skip_bytes, echo_command)?;
+    if is_mode09_vin_request(echo_command) {
+        return assemble_mode09_vin_payload(&payloads);
+    }
     if expected_prefix_is_used(echo_command, skip_bytes) {
         return Ok(payloads.remove(0));
     }
@@ -110,6 +113,73 @@ fn expected_response_prefix(command: &str, skip_bytes: usize) -> Option<Vec<u8>>
 
 fn expected_prefix_is_used(echo_command: Option<&str>, skip_bytes: usize) -> bool {
     echo_command.is_some() && skip_bytes > 0
+}
+
+fn is_mode09_vin_request(echo_command: Option<&str>) -> bool {
+    echo_command
+        .and_then(|command| parse_compact_hex(command).ok())
+        .is_some_and(|request| request == [0x09, 0x02])
+}
+
+fn assemble_mode09_vin_payload(payloads: &[Vec<u8>]) -> Result<Vec<u8>, Obd2Error> {
+    const VIN_LENGTH: usize = 17;
+
+    // SAE J1979 Mode 09 responses carry a sequence byte after 49 02. ELM
+    // adapters with headers disabled commonly repeat 49 02 on every physical
+    // frame, so the generic decoder intentionally returns one payload per
+    // frame. Reassemble only this sequenced response; repeated prefixes for
+    // ordinary PID queries may be replies from multiple ECUs and must remain
+    // separate.
+    let uses_sequence_frames = payloads
+        .first()
+        .and_then(|payload| payload.first())
+        .is_some_and(|sequence| *sequence == 1);
+    let mut vin = Vec::with_capacity(VIN_LENGTH);
+
+    if uses_sequence_frames {
+        let mut expected_sequence = 1u8;
+        for payload in payloads {
+            let Some((&sequence, frame_data)) = payload.split_first() else {
+                return Err(Obd2Error::ParseError("empty Mode 09 VIN frame".to_string()));
+            };
+            if sequence != expected_sequence {
+                return Err(Obd2Error::ParseError(format!(
+                    "out-of-sequence Mode 09 VIN frame: expected {expected_sequence}, got {sequence}"
+                )));
+            }
+
+            vin.extend(
+                frame_data
+                    .iter()
+                    .copied()
+                    .filter(|byte| (0x20..=0x7e).contains(byte)),
+            );
+            if vin.len() >= VIN_LENGTH {
+                vin.truncate(VIN_LENGTH);
+                return Ok(vin);
+            }
+            expected_sequence = expected_sequence.checked_add(1).ok_or_else(|| {
+                Obd2Error::ParseError("Mode 09 VIN frame sequence overflow".to_string())
+            })?;
+        }
+    } else {
+        vin.extend(
+            payloads
+                .iter()
+                .flatten()
+                .copied()
+                .filter(|byte| (0x20..=0x7e).contains(byte)),
+        );
+        if vin.len() >= VIN_LENGTH {
+            vin.truncate(VIN_LENGTH);
+            return Ok(vin);
+        }
+    }
+
+    Err(Obd2Error::ParseError(format!(
+        "incomplete Mode 09 VIN response: {} of {VIN_LENGTH} characters",
+        vin.len()
+    )))
 }
 
 fn decode_line(
@@ -318,5 +388,53 @@ mod tests {
             payloads,
             vec![vec![0xBE, 0x3E, 0xB8, 0x11], vec![0x80, 0x00, 0x00, 0x04],]
         );
+    }
+
+    #[test]
+    fn headers_off_j1850_mode09_vin_frames_are_reassembled() {
+        let payload = decode_elm_response_payload_for_command(
+            concat!(
+                "49020100000031\r",
+                "4902024743484B\r",
+                "49020332333232\r",
+                "49020434463030\r",
+                "49020530303031\r>"
+            ),
+            BusFamily::J1850,
+            2,
+            Some("0902"),
+        )
+        .unwrap();
+
+        assert_eq!(payload, b"1GCHK23224F000001");
+    }
+
+    #[test]
+    fn incomplete_mode09_vin_frames_are_rejected() {
+        let result = decode_elm_response_payload_for_command(
+            "49020100000031\r4902024743484B\r>",
+            BusFamily::J1850,
+            2,
+            Some("0902"),
+        );
+
+        assert!(matches!(result, Err(Obd2Error::ParseError(_))));
+    }
+
+    #[test]
+    fn out_of_sequence_mode09_vin_frames_are_rejected() {
+        let result = decode_elm_response_payload_for_command(
+            concat!(
+                "49020100000031\r",
+                "49020332333232\r",
+                "49020434463030\r",
+                "49020530303031\r>"
+            ),
+            BusFamily::J1850,
+            2,
+            Some("0902"),
+        );
+
+        assert!(matches!(result, Err(Obd2Error::ParseError(_))));
     }
 }

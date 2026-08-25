@@ -786,6 +786,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_elm327_reads_multiframe_j1850_vin() {
+        let mut transport = MockTransport::new();
+        transport.expect("AT SH 686AF1", "OK\r>");
+        transport.expect(
+            "0902",
+            concat!(
+                "49020100000031\r",
+                "4902024743484B\r",
+                "49020332333232\r",
+                "49020434463030\r",
+                "49020530303031\r>"
+            ),
+        );
+
+        let mut adapter = Elm327Adapter::new(Box::new(transport));
+        adapter.info.protocol = Protocol::J1850Vpw;
+        adapter.initialized = true;
+
+        let response = adapter.request(&ServiceRequest::read_vin()).await.unwrap();
+        assert_eq!(response, b"1GCHK23224F000001");
+    }
+
+    #[tokio::test]
     async fn test_elm327_read_pid_compact_response_trims_stale_suffix() {
         let mut transport = MockTransport::new();
         setup_init(&mut transport);

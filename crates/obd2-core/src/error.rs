@@ -134,6 +134,36 @@ pub enum Obd2Error {
     Other(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
 
+impl Obd2Error {
+    /// Whether continuing to use the current adapter session would preserve a
+    /// false impression of vehicle connectivity.
+    ///
+    /// `NO DATA` and request timeouts are deliberately excluded: either can
+    /// be normal for an individual ECU request. Serial I/O failures and the
+    /// adapter's explicit bus-loss responses require the session owner to
+    /// drop and reconnect instead of retaining a "live" state.
+    pub fn is_connection_loss(&self) -> bool {
+        match self {
+            Self::Transport(_) | Self::Io(_) => true,
+            Self::Adapter(message) => {
+                let message = message.to_ascii_lowercase();
+                [
+                    "unable to connect",
+                    "bus initialization error",
+                    "bus error",
+                    "can bus error",
+                    "can error",
+                    "command stopped",
+                    "low-voltage reset",
+                ]
+                .iter()
+                .any(|needle| message.contains(needle))
+            }
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,6 +190,18 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "gone");
         let obd_err: Obd2Error = io_err.into();
         assert!(matches!(obd_err, Obd2Error::Io(_)));
+    }
+
+    #[test]
+    fn explicit_adapter_bus_loss_requires_reconnect() {
+        let error = Obd2Error::Adapter("unable to connect to vehicle".to_string());
+        assert!(error.is_connection_loss());
+    }
+
+    #[test]
+    fn per_request_absence_does_not_require_reconnect() {
+        assert!(!Obd2Error::NoData.is_connection_loss());
+        assert!(!Obd2Error::Timeout.is_connection_loss());
     }
 
     #[test]
